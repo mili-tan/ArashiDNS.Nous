@@ -65,17 +65,24 @@ namespace ArashiDNS.Nous
             }
 
             if (!File.Exists("./GeoLite2-Country.mmdb"))
+            {
+                Console.WriteLine("Downloading GeoLite2-Country.mmdb...");
                 File.WriteAllBytes("./GeoLite2-Country.mmdb",
                     new HttpClient()
                         .GetByteArrayAsync(
-                            "https://github.com/mili-tan/maxmind-geoip/releases/latest/download/GeoLite2-Country.mmdb")
+                            "https://fastly.jsdelivr.net/gh/P3TERX/GeoLite.mmdb@download/GeoLite2-Country.mmdb")
                         .Result);
+            }
+
             if (!File.Exists("./public_suffix_list.dat"))
+            {
+                Console.WriteLine("Downloading public_suffix_list.dat...");
                 File.WriteAllBytes("./public_suffix_list.dat",
                     new HttpClient()
                         .GetByteArrayAsync(
                             "https://publicsuffix.org/list/public_suffix_list.dat")
                         .Result);
+            }
 
             CountryReader = new DatabaseReader("./GeoLite2-Country.mmdb");
             TldExtract = new TldExtract("./public_suffix_list.dat");
