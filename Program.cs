@@ -10,18 +10,19 @@ namespace ArashiDNS.Nous
 {
     internal class Program
     {
-        public static IPAddress GlobalServer = IPAddress.Parse("8.8.4.4");
-        public static IPAddress TargetServer = IPAddress.Parse("223.5.5.5");
+        public static IPEndPoint GlobalServer = IPEndPoint.Parse("9.9.9.11:9953");
+        public static IPEndPoint RegionalServer = IPEndPoint.Parse("223.5.5.5:53");
         public static IPEndPoint ListenerEndPoint = new(IPAddress.Loopback, 6653);
         public static DatabaseReader CountryReader;
         public static TldExtract TldExtract;
         public static string TargetRegion = "CN";
-        public static IPAddress TargetECS = IPAddress.Parse("123.123.123.0");
+        public static IPAddress RegionalECS = IPAddress.Parse("123.123.123.0");
+        public static int TimeOut = 3000;
 
         public static DnsQueryOptions QueryOptions = new DnsQueryOptions()
         {
             IsEDnsEnabled = true,
-            EDnsOptions = new OptRecord { Options = { new ClientSubnetOption(24, TargetECS) } }
+            EDnsOptions = new OptRecord { Options = { new ClientSubnetOption(24, RegionalECS) } }
         };
 
         static void Main(string[] args)
@@ -69,26 +70,24 @@ namespace ArashiDNS.Nous
             Console.WriteLine(questExtract);
             var questRootName = DomainName.Parse(string.Join('.', string.IsNullOrWhiteSpace(questExtract.tld)
                 ? questName.Labels.TakeLast(2)
-                : new List<string> {questExtract.root, questExtract.tld}));
+                : [questExtract.root, questExtract.tld]));
             var response = query.CreateResponseInstance();
             var (rootNsIs,roorNs) = await FromNameGetNsIs(questRootName);
 
-            Console.WriteLine(string.Join(" | ",
-                new List<string>()
-                    {questName.ToString(), questRootName.ToString(), "-", roorNs.ToString(), rootNsIs.ToString()}));
+            Console.WriteLine(string.Join(" | ", questName.ToString(), questRootName.ToString(), "-", roorNs.ToString(), rootNsIs.ToString()));
 
             if (rootNsIs)
-                response = await new DnsClient(TargetServer, 10000).SendMessageAsync(query);
+                response = await new DnsClient([RegionalServer.Address], [new UdpClientTransport(RegionalServer.Port)],queryTimeout: TimeOut).SendMessageAsync(query);
             else
             {
-                response = await new DnsClient(GlobalServer, 10000).SendMessageAsync(query);
+                response = await new DnsClient([GlobalServer.Address], [new UdpClientTransport(GlobalServer.Port)], queryTimeout: TimeOut).SendMessageAsync(query);
                 if (response != null && response.AnswerRecords.Any(x => x.RecordType == RecordType.CName))
                 {
                     var cName =
                         (response.AnswerRecords.LastOrDefault(x => x.RecordType == RecordType.CName) as CNameRecord)
                         ?.CanonicalName;
                     var cnameExtract = TldExtract.Extract(cName.ToString().Trim().Trim('.'));
-                    var cnameRootName = DomainName.Parse(string.Join('.', new List<string> { cnameExtract.root, cnameExtract.tld }));
+                    var cnameRootName = DomainName.Parse(string.Join('.', cnameExtract.root, cnameExtract.tld));
                     var (cnameNsIs, cnameNs) = await FromNameGetNsIs(cnameRootName);
 
                     Console.WriteLine(string.Join(" | ",
@@ -99,7 +98,7 @@ namespace ArashiDNS.Nous
                         }));
 
                     if (cnameNsIs)
-                        response = await new DnsClient(TargetServer, 10000).SendMessageAsync(query);
+                        response = await new DnsClient([RegionalServer.Address], [new UdpClientTransport(RegionalServer.Port)], queryTimeout: TimeOut).SendMessageAsync(query);
                 }
             }
             Console.WriteLine("-----------------------------------");
@@ -108,26 +107,32 @@ namespace ArashiDNS.Nous
 
         private static async Task<(bool isRegion, DomainName ns)> FromNameGetNsIs(DomainName name)
         {
-            Console.WriteLine(name.ToString());
-            var nsMsg = await new DnsClient(GlobalServer, 10000).ResolveAsync(name, RecordType.Ns,
-                options: QueryOptions);
-            if (nsMsg == null || !nsMsg.AnswerRecords.Any())
-                nsMsg = await new DnsClient(GlobalServer, 10000).ResolveAsync(name, RecordType.Ns);
-            Console.WriteLine(nsMsg.ReturnCode);
+            try
+            {
+                Console.WriteLine(name.ToString());
+                var client = new DnsClient([GlobalServer.Address], [new UdpClientTransport(GlobalServer.Port)], queryTimeout: TimeOut);
+                var nsMsg = await client.ResolveAsync(name, RecordType.Ns, options: QueryOptions);
+                if (nsMsg == null || !nsMsg.AnswerRecords.Any()) nsMsg = await client.ResolveAsync(name, RecordType.Ns);
+                Console.WriteLine(nsMsg.ReturnCode);
 
-            var nsRecord = nsMsg.AnswerRecords?.FirstOrDefault(x => x.RecordType == RecordType.Ns);
-            Console.WriteLine(nsRecord);
-            var nsName = (nsRecord as NsRecord)?.NameServer;
-            var nsAMsg = (await new DnsClient(GlobalServer, 10000)
-                .ResolveAsync(nsName, options: QueryOptions));
-            if (nsAMsg == null || !nsAMsg.AnswerRecords.Any())
-                nsAMsg = await new DnsClient(GlobalServer, 10000).ResolveAsync(nsName);
-            Console.WriteLine(nsAMsg.ReturnCode);
-            Console.WriteLine(nsAMsg.AnswerRecords.FirstOrDefault());
-            var nsAddress = (nsAMsg.AnswerRecords.First(x => x.RecordType == RecordType.A) as ARecord).Address;
-            Console.WriteLine(CountryReader.Country(nsAddress).Country.IsoCode ?? "UN");
-            return (string.Equals(CountryReader.Country(nsAddress).Country.IsoCode, TargetRegion,
-                StringComparison.CurrentCultureIgnoreCase), nsName);
+                var nsRecord = nsMsg.AnswerRecords.OrderByDescending(x => x.Name)
+                    .FirstOrDefault(x => x.RecordType == RecordType.Ns);
+                Console.WriteLine(nsRecord);
+
+                var nsName = (nsRecord as NsRecord)?.NameServer;
+                var nsAMsg = (await client.ResolveAsync(nsName, options: QueryOptions));
+                if (nsAMsg == null || !nsAMsg.AnswerRecords.Any()) nsAMsg = await client.ResolveAsync(nsName);
+                Console.WriteLine(nsAMsg.ReturnCode);
+                Console.WriteLine(nsAMsg.AnswerRecords.FirstOrDefault());
+                var nsAddress = (nsAMsg.AnswerRecords.First(x => x.RecordType == RecordType.A) as ARecord)?.Address;
+                Console.WriteLine(CountryReader.Country(nsAddress).Country.IsoCode ?? "UN");
+                return (string.Equals(CountryReader.Country(nsAddress).Country.IsoCode, TargetRegion,
+                    StringComparison.CurrentCultureIgnoreCase), nsName);
+            }
+            catch (Exception e)
+            {
+                return (false, DomainName.Root);
+            }
         }
     }
 }
