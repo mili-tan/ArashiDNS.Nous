@@ -30,6 +30,40 @@ namespace ArashiDNS.Nous
         static void Main(string[] args)
         {
             Console.Clear();
+
+            Console.WriteLine("ArashiDNS Nous - Experimental");
+
+            var client = new HttpClient();
+            client.DefaultRequestHeaders.Add("User-Agent", "curl/8.5.0");
+
+            foreach (var item in new HttpClient().GetStringAsync("https://fastly.jsdelivr.net/gh/felixonmars/dnsmasq-china-list@master/ns-whitelist.txt").Result.Split('\n'))
+            {
+                try
+                {
+                    if (string.IsNullOrWhiteSpace(item) || item.StartsWith('#')) continue;
+                    DomainRegionMap.TryAdd(DomainName.Parse(item.Trim().Trim('.')), "CN");
+                    Console.WriteLine($"Add Ns Cache: {item.Trim().Trim('.')} -> CN");
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine(e);
+                }
+            }
+
+            foreach (var item in new HttpClient().GetStringAsync("https://fastly.jsdelivr.net/gh/felixonmars/dnsmasq-china-list@master/ns-blacklist.txt").Result.Split('\n'))
+            {
+                try
+                {
+                    if (string.IsNullOrWhiteSpace(item) || item.StartsWith('#')) continue;
+                    DomainRegionMap.TryAdd(DomainName.Parse(item.Trim().Trim('.')), "UN");
+                    Console.WriteLine($"Add Ns Cache: {item.Trim().Trim('.')} -> UN");
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine(e);
+                }
+            }
+
             if (!File.Exists("./GeoLite2-Country.mmdb"))
                 File.WriteAllBytes("./GeoLite2-Country.mmdb",
                     new HttpClient()
@@ -134,8 +168,10 @@ namespace ArashiDNS.Nous
                 if (nsMsg == null || !nsMsg.AnswerRecords.Any()) nsMsg = await client.ResolveAsync(name, RecordType.Ns);
                 Console.WriteLine("NS RCode: " + nsMsg.ReturnCode);
 
-                var nsRecord = nsMsg.AnswerRecords.OrderByDescending(x => x.Name)
+
+                var nsRecord = nsMsg.AnswerRecords.OrderBy(x => x.Name.Labels.First())
                     .FirstOrDefault(x => x.RecordType == RecordType.Ns);
+
                 Console.WriteLine("NS Record: " + nsRecord);
 
                 var nsName = (nsRecord as NsRecord)?.NameServer;
