@@ -186,6 +186,7 @@ namespace ArashiDNS.Nous
                 if (findNs != null)
                 {
                     Console.WriteLine($"Found NS Cache: {findNs} -> {DomainRegionMap[findNs]}");
+                    DomainRegionMap.TryAdd(name, DomainRegionMap[findNs]);
                     return (string.Equals(DomainRegionMap[findNs], TargetRegion, StringComparison.CurrentCultureIgnoreCase), findNs);
                 }
 
