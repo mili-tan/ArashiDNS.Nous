@@ -3,6 +3,7 @@ using ARSoft.Tools.Net.Dns;
 using MaxMind.GeoIP2;
 using NStack;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Net;
 using IPAddress = System.Net.IPAddress;
 
@@ -108,6 +109,29 @@ namespace ArashiDNS.Nous
         private static async Task DnsServerOnQueryReceived(object sender, QueryReceivedEventArgs e)
         {
             if (e.Query is not DnsMessage query || query.Questions.Count == 0) return;
+
+            if (query.Questions.First().Name.IsEqualOrSubDomainOf(DomainName.Parse("use-application-dns.net")))
+            {
+                var msg = query.CreateResponseInstance();
+                msg.IsRecursionAllowed = true;
+                msg.IsRecursionDesired = true;
+                msg.ReturnCode = ReturnCode.NoError;
+                e.Response = msg;
+                return;
+            }
+
+            if (query.Questions.First().RecordClass == RecordClass.Chaos && query.Questions.First().RecordType == RecordType.Txt &&
+                query.Questions.First().Name.IsEqualOrSubDomainOf(DomainName.Parse("version.bind")))
+            {
+                var msg = query.CreateResponseInstance();
+                msg.IsRecursionAllowed = true;
+                msg.IsRecursionDesired = true;
+                msg.AnswerRecords.Add(
+                    new TxtRecord(query.Questions.First().Name, 3600, "ArashiDNS.Aha"));
+                e.Response = msg;
+                return;
+            }
+
             var questName = query.Questions.First().Name;
             var questExtract = TldExtract.Extract(questName.ToString().Trim().Trim('.'));
 
@@ -198,7 +222,11 @@ namespace ArashiDNS.Nous
 
                 var nsAddress = (nsAMsg.AnswerRecords.First(x => x.RecordType == RecordType.A) as ARecord)?.Address;
                 var nsCountry = CountryReader.Country(nsAddress).Country.IsoCode ?? "UN";
+
+                Stopwatch sp = Stopwatch.StartNew();
                 var nsExtract = TldExtract.Extract(nsName.ToString().Trim().Trim('.'));
+                sp.Stop();
+                Console.WriteLine($"TLD Extract Time: {sp.ElapsedMilliseconds}ms");
                 var nsRootName = DomainName.Parse(string.Join('.', string.IsNullOrWhiteSpace(nsExtract.tld)
                     ? nsName.Labels.TakeLast(2)
                     : [nsExtract.root, nsExtract.tld]));
