@@ -206,6 +206,21 @@ namespace ArashiDNS.Nous
                 Console.WriteLine("NS Record: " + nsRecord);
 
                 var nsName = (nsRecord as NsRecord)?.NameServer;
+
+                if (nsName.ToString().Contains("awsdns-cn-"))
+                {
+                    Console.WriteLine($"Found AWSDNS-CN: {nsName} -> CN");
+                    DomainRegionMap.TryAdd(name, "CN");
+                    return (string.Equals("CN", TargetRegion, StringComparison.CurrentCultureIgnoreCase),
+                        DomainName.Parse("awsdns-cn-1.com"));
+                }
+                if (nsName.ToString().Contains("awsdns-"))
+                {
+                    Console.WriteLine($"Found AWSDNS: {nsName} -> US");
+                    DomainRegionMap.TryAdd(name, "US");
+                    return (string.Equals("US", TargetRegion, StringComparison.CurrentCultureIgnoreCase), DomainName.Parse("awsdns-1.com"));
+                }
+
                 var findNs = DomainRegionMap.Keys.FirstOrDefault(nsName.IsEqualOrSubDomainOf);
                 if (findNs != null)
                 {
