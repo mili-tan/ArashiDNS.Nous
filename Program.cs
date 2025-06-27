@@ -6,7 +6,6 @@ using NStack;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
-using IPAddress = System.Net.IPAddress;
 
 namespace ArashiDNS.Nous
 {
@@ -18,8 +17,8 @@ namespace ArashiDNS.Nous
         public static DatabaseReader CountryReader;
         public static TldExtract TldExtract;
         public static string TargetRegion = "CN";
-        public static IPAddress RegionalECS = IPAddress.Parse("123.123.123.0");
         public static int TimeOut = 3000;
+        public static IPAddress RegionalECS = IPAddress.Parse("123.123.123.0");
 
         public static ConcurrentDictionary<DomainName, string> DomainRegionMap = new();
         public static DnsQueryOptions QueryOptions = new()
