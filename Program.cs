@@ -18,6 +18,7 @@ namespace ArashiDNS.Nous
         public static TldExtract TldExtract;
         public static string TargetRegion = "CN";
         public static int TimeOut = 3000;
+        public static int LogLevel = 0; // 0: Error, 1: Info, 2: Debug
         public static IPAddress RegionalECS = IPAddress.Parse("123.123.123.0");
 
         public static ConcurrentDictionary<DomainName, string> DomainRegionMap = new();
@@ -207,8 +208,10 @@ namespace ArashiDNS.Nous
             var response = query.CreateResponseInstance();
             var (rootNsIs,roorNs) = await FromNameGetNsIs(questRootName);
 
-            Console.WriteLine("RootNAME Result: " + string.Join(" | ", questName.ToString(), questRootName.ToString(), "-",
-                roorNs.ToString(), rootNsIs.ToString()));
+            if (LogLevel >= 1)
+                Console.WriteLine("RootNAME Result: " + string.Join(" | ", questName.ToString(),
+                    questRootName.ToString(), "-",
+                    roorNs.ToString(), rootNsIs.ToString()));
 
             if (rootNsIs)
                 response = await new DnsClient([RegionalServer.Address], [new UdpClientTransport(RegionalServer.Port)],queryTimeout: TimeOut).SendMessageAsync(query);
@@ -226,14 +229,16 @@ namespace ArashiDNS.Nous
                         : [cnameExtract.root, cnameExtract.tld]));
                     var (cnameNsIs, cnameNs) = await FromNameGetNsIs(cnameRootName);
 
-                    Console.WriteLine("CNAME Result: " + string.Join(" | ", questName.ToString(), cName.ToString(), "-",
-                        cnameRootName.ToString(), cnameNs.ToString(), "-", cnameNsIs.ToString()));
+                    if (LogLevel >= 1)
+                        Console.WriteLine("CNAME Result: " + string.Join(" | ", questName.ToString(), cName.ToString(), "-",
+                            cnameRootName.ToString(), cnameNs.ToString(), "-", cnameNsIs.ToString()));
 
                     if (cnameNsIs)
                         response = await new DnsClient([RegionalServer.Address], [new UdpClientTransport(RegionalServer.Port)], queryTimeout: TimeOut).SendMessageAsync(query);
                 }
             }
-            Console.WriteLine("-----------------------------------");
+            if (LogLevel >= 1)
+                Console.WriteLine("-----------------------------------");
             e.Response = response;
         }
 
@@ -241,37 +246,37 @@ namespace ArashiDNS.Nous
         {
             try
             {
+                if (LogLevel >= 2) Console.WriteLine("Root Name: " + name);
+
                 var findName = DomainRegionMap.Keys.FirstOrDefault(name.IsEqualOrSubDomainOf);
                 if (findName != null)
                 {
-                    Console.WriteLine($"Found Cache: {findName} -> {DomainRegionMap[findName]}");
+                    if (LogLevel >= 2)
+                        Console.WriteLine($"Found Cache: {findName} -> {DomainRegionMap[findName]}");
                     return (string.Equals(DomainRegionMap[findName], TargetRegion, StringComparison.CurrentCultureIgnoreCase), findName);
                 }
 
-                Console.WriteLine("Root Name: " + name);
                 var client = new DnsClient([GlobalServer.Address], [new UdpClientTransport(GlobalServer.Port)], queryTimeout: TimeOut);
                 var nsMsg = await client.ResolveAsync(name, RecordType.Ns, options: QueryOptions);
                 if (nsMsg == null || !nsMsg.AnswerRecords.Any()) nsMsg = await client.ResolveAsync(name, RecordType.Ns);
-                Console.WriteLine("NS RCode: " + nsMsg.ReturnCode);
-
+                if (LogLevel >= 2) Console.WriteLine("NS RCode: " + nsMsg.ReturnCode);
 
                 var nsRecord = nsMsg.AnswerRecords.OrderBy(x => x.Name.Labels.First())
                     .FirstOrDefault(x => x.RecordType == RecordType.Ns);
-
-                Console.WriteLine("NS Record: " + nsRecord);
+                if (LogLevel >= 2) Console.WriteLine("NS Record: " + nsRecord);
 
                 var nsName = (nsRecord as NsRecord)?.NameServer;
 
                 if (nsName.ToString().Contains("awsdns-cn-"))
                 {
-                    Console.WriteLine($"Found AWSDNS-CN: {nsName} -> CN");
+                    if (LogLevel >= 2) Console.WriteLine($"Found AWSDNS-CN: {nsName} -> CN");
                     DomainRegionMap.TryAdd(name, "CN");
                     return (string.Equals("CN", TargetRegion, StringComparison.CurrentCultureIgnoreCase),
                         DomainName.Parse("awsdns-cn-1.com"));
                 }
                 if (nsName.ToString().Contains("awsdns-"))
                 {
-                    Console.WriteLine($"Found AWSDNS: {nsName} -> US");
+                    if (LogLevel >= 2) Console.WriteLine($"Found AWSDNS: {nsName} -> US");
                     DomainRegionMap.TryAdd(name, "US");
                     return (string.Equals("US", TargetRegion, StringComparison.CurrentCultureIgnoreCase), DomainName.Parse("awsdns-1.com"));
                 }
@@ -279,7 +284,7 @@ namespace ArashiDNS.Nous
                 var findNs = DomainRegionMap.Keys.FirstOrDefault(nsName.IsEqualOrSubDomainOf);
                 if (findNs != null)
                 {
-                    Console.WriteLine($"Found NS Cache: {findNs} -> {DomainRegionMap[findNs]}");
+                    if (LogLevel >= 2) Console.WriteLine($"Found NS Cache: {findNs} -> {DomainRegionMap[findNs]}");
                     DomainRegionMap.TryAdd(name, DomainRegionMap[findNs]);
                     return (string.Equals(DomainRegionMap[findNs], TargetRegion, StringComparison.CurrentCultureIgnoreCase), findNs);
                 }
@@ -287,27 +292,26 @@ namespace ArashiDNS.Nous
                 var nsAMsg = (await client.ResolveAsync(nsName, options: QueryOptions));
                 if (nsAMsg == null || !nsAMsg.AnswerRecords.Any()) nsAMsg = await client.ResolveAsync(nsName);
 
-                Console.WriteLine("NS-A RCode: " + nsAMsg.ReturnCode);
-                Console.WriteLine("NS-A Record: " + nsAMsg.AnswerRecords.FirstOrDefault());
+                if (LogLevel >= 2) Console.WriteLine("NS-A RCode: " + nsAMsg.ReturnCode);
+                if (LogLevel >= 2) Console.WriteLine("NS-A Record: " + nsAMsg.AnswerRecords.FirstOrDefault());
+
 
                 var nsAddress = (nsAMsg.AnswerRecords.First(x => x.RecordType == RecordType.A) as ARecord)?.Address;
                 var nsCountry = CountryReader.Country(nsAddress).Country.IsoCode ?? "UN";
 
-                Stopwatch sp = Stopwatch.StartNew();
                 var nsExtract = TldExtract.Extract(nsName.ToString().Trim().Trim('.'));
-                sp.Stop();
-                Console.WriteLine($"TLD Extract Time: {sp.ElapsedMilliseconds}ms");
                 var nsRootName = DomainName.Parse(string.Join('.', string.IsNullOrWhiteSpace(nsExtract.tld)
                     ? nsName.Labels.TakeLast(2)
                     : [nsExtract.root, nsExtract.tld]));
 
-                Console.WriteLine(nsCountry);
+                if (LogLevel >= 2) Console.WriteLine("NS GEO: " + nsCountry);
                 DomainRegionMap.TryAdd(name, nsCountry);
                 DomainRegionMap.TryAdd(nsRootName, nsCountry);
                 return (string.Equals(nsCountry, TargetRegion, StringComparison.CurrentCultureIgnoreCase), nsName);
             }
             catch (Exception e)
             {
+                if (LogLevel >= 0) Console.WriteLine("Error: " + e.Message);
                 return (false, DomainName.Root);
             }
         }
