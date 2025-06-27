@@ -1,6 +1,7 @@
 ﻿using ARSoft.Tools.Net;
 using ARSoft.Tools.Net.Dns;
 using MaxMind.GeoIP2;
+using McMaster.Extensions.CommandLineUtils;
 using NStack;
 using System.Collections.Concurrent;
 using System.Diagnostics;
@@ -21,8 +22,7 @@ namespace ArashiDNS.Nous
         public static int TimeOut = 3000;
 
         public static ConcurrentDictionary<DomainName, string> DomainRegionMap = new();
-
-        public static DnsQueryOptions QueryOptions = new DnsQueryOptions()
+        public static DnsQueryOptions QueryOptions = new()
         {
             IsEDnsEnabled = true,
             EDnsOptions = new OptRecord { Options = { new ClientSubnetOption(24, RegionalECS) } }
@@ -30,9 +30,6 @@ namespace ArashiDNS.Nous
 
         static void Main(string[] args)
         {
-            Console.Clear();
-
-            Console.WriteLine("ArashiDNS Nous - Experimental");
 
             var client = new HttpClient();
             client.DefaultRequestHeaders.Add("User-Agent", "curl/8.5.0");
@@ -111,22 +108,58 @@ namespace ArashiDNS.Nous
             CountryReader = new DatabaseReader("./GeoLite2-Country.mmdb");
             TldExtract = new TldExtract("./public_suffix_list.dat");
 
-            var dnsServer = new DnsServer(new UdpServerTransport(ListenerEndPoint),
-                new TcpServerTransport(ListenerEndPoint));
-            dnsServer.QueryReceived += DnsServerOnQueryReceived;
-            dnsServer.Start();
-
-            Console.WriteLine("Now listening on: " + ListenerEndPoint);
-            Console.WriteLine("Application started. Press Ctrl+C / q to shut down.");
-            if (!Console.IsInputRedirected && Console.KeyAvailable)
+            var cmd = new CommandLineApplication
             {
-                while (true)
-                    if (Console.ReadKey().KeyChar == 'q')
-                        Environment.Exit(0);
-            }
+                Name = "ArashiDNS.Nous",
+                Description = "ArashiDNS.Nous - ListFree Geo Diversion DNS Forwarder" +
+                              Environment.NewLine +
+                              $"Copyright (c) {DateTime.Now.Year} Milkey Tan. Code released under the FSL-1.1-ALv2 License"
+            };
+            cmd.HelpOption("-?|-h|--help");
+            var wOption = cmd.Option<int>("-w <TimeOut>", "等待回复的超时时间（毫秒）。", CommandOptionType.SingleValue);
+            var sOption = cmd.Option<string>("-s <IPEndPoint>", "设置的目标区域服务器的地址。[223.5.5.5:53]", CommandOptionType.SingleValue);
+            var gOption = cmd.Option<string>("-g <IPEndPoint>", "设置的全局服务器地址。。[8.8.8.8:53]", CommandOptionType.SingleValue);
+            var rOption = cmd.Option<string>("-r <Region>", "设置的目标区域。", CommandOptionType.SingleValue);
+            var ecsOption = cmd.Option<string>("-e <IPAddress>", "设置目标区域 ECS 地址。", CommandOptionType.SingleValue);
+            var lOption = cmd.Option<string>("-l <ListenerEndPoint>", "设置的监听地址。", CommandOptionType.SingleValue);
 
-            EventWaitHandle wait = new AutoResetEvent(false);
-            while (true) wait.WaitOne();
+            cmd.OnExecute(() =>
+            {
+                if (wOption.HasValue()) TimeOut = wOption.ParsedValue;
+                if (sOption.HasValue()) RegionalServer = IPEndPoint.Parse(sOption.ParsedValue);
+                if (gOption.HasValue()) GlobalServer = IPEndPoint.Parse(gOption.ParsedValue);
+                if (rOption.HasValue()) TargetRegion = rOption.ParsedValue;
+                if (ecsOption.HasValue()) RegionalECS = IPAddress.Parse(ecsOption.ParsedValue);
+                if (lOption.HasValue()) ListenerEndPoint = IPEndPoint.Parse(lOption.ParsedValue);
+
+                if (RegionalServer.Port == 0) RegionalServer = new IPEndPoint(RegionalServer.Address, 53);
+                if (GlobalServer.Port == 0) GlobalServer = new IPEndPoint(GlobalServer.Address, 53);
+                if (ListenerEndPoint.Port == 0) ListenerEndPoint = new IPEndPoint(ListenerEndPoint.Address, 6653);
+
+                QueryOptions = new DnsQueryOptions()
+                {
+                    IsEDnsEnabled = true,
+                    EDnsOptions = new OptRecord {Options = {new ClientSubnetOption(24, RegionalECS)}}
+                };
+
+                var dnsServer = new DnsServer(new UdpServerTransport(ListenerEndPoint),
+                    new TcpServerTransport(ListenerEndPoint));
+                dnsServer.QueryReceived += DnsServerOnQueryReceived;
+                dnsServer.Start();
+
+                Console.WriteLine("Now listening on: " + ListenerEndPoint);
+                Console.WriteLine("Application started. Press Ctrl+C / q to shut down.");
+                if (!Console.IsInputRedirected && Console.KeyAvailable)
+                {
+                    while (true)
+                        if (Console.ReadKey().KeyChar == 'q')
+                            Environment.Exit(0);
+                }
+
+                EventWaitHandle wait = new AutoResetEvent(false);
+                while (true) wait.WaitOne();
+            });
+            cmd.Execute(args);
         }
 
         private static async Task DnsServerOnQueryReceived(object sender, QueryReceivedEventArgs e)
