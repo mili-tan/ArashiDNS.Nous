@@ -4,7 +4,6 @@ using MaxMind.GeoIP2;
 using McMaster.Extensions.CommandLineUtils;
 using NStack;
 using System.Collections.Concurrent;
-using System.Diagnostics;
 using System.Net;
 
 namespace ArashiDNS.Nous
@@ -30,84 +29,6 @@ namespace ArashiDNS.Nous
 
         static void Main(string[] args)
         {
-
-            var client = new HttpClient();
-            client.DefaultRequestHeaders.Add("User-Agent", "curl/8.5.0");
-
-            foreach (var item in new HttpClient()
-                         .GetStringAsync(
-                             "https://fastly.jsdelivr.net/gh/felixonmars/dnsmasq-china-list@master/ns-whitelist.txt")
-                         .Result.Split('\n'))
-            {
-                try
-                {
-                    if (string.IsNullOrWhiteSpace(item) || item.StartsWith('#')) continue;
-                    DomainRegionMap.TryAdd(DomainName.Parse(item.Trim().Trim('.')), "CN");
-                    Console.WriteLine($"Add Ns Cache: {item.Trim().Trim('.')} -> CN");
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine(e);
-                }
-            }
-
-            foreach (var item in new HttpClient()
-                         .GetStringAsync(
-                             "https://fastly.jsdelivr.net/gh/felixonmars/dnsmasq-china-list@master/ns-blacklist.txt")
-                         .Result.Split('\n'))
-            {
-                try
-                {
-                    if (string.IsNullOrWhiteSpace(item) || item.StartsWith('#')) continue;
-                    DomainRegionMap.TryAdd(DomainName.Parse(item.Trim().Trim('.')), "UN");
-                    Console.WriteLine($"Add Ns Cache: {item.Trim().Trim('.')} -> UN");
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine(e);
-                }
-            }
-
-            foreach (var item in new HttpClient()
-                         .GetStringAsync("https://fastly.jsdelivr.net/gh/mili-tan/ArashiDNS.Nous@master/ns.csv").Result
-                         .Split('\n'))
-            {
-                try
-                {
-                    if (string.IsNullOrWhiteSpace(item) || item.StartsWith('#')) continue;
-                    var i = item.Split(',');
-                    DomainRegionMap.TryAdd(DomainName.Parse(i[0].Trim().Trim('.')), i[1]);
-                    Console.WriteLine($"Add Ns Cache: {i[0].Trim().Trim('.')} -> {i[1]}");
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine(e);
-                }
-            }
-
-            if (!File.Exists("./GeoLite2-Country.mmdb"))
-            {
-                Console.WriteLine("Downloading GeoLite2-Country.mmdb...");
-                File.WriteAllBytes("./GeoLite2-Country.mmdb",
-                    new HttpClient()
-                        .GetByteArrayAsync(
-                            "https://fastly.jsdelivr.net/gh/P3TERX/GeoLite.mmdb@download/GeoLite2-Country.mmdb")
-                        .Result);
-            }
-
-            if (!File.Exists("./public_suffix_list.dat"))
-            {
-                Console.WriteLine("Downloading public_suffix_list.dat...");
-                File.WriteAllBytes("./public_suffix_list.dat",
-                    new HttpClient()
-                        .GetByteArrayAsync(
-                            "https://publicsuffix.org/list/public_suffix_list.dat")
-                        .Result);
-            }
-
-            CountryReader = new DatabaseReader("./GeoLite2-Country.mmdb");
-            TldExtract = new TldExtract("./public_suffix_list.dat");
-
             var cmd = new CommandLineApplication
             {
                 Name = "ArashiDNS.Nous",
@@ -115,13 +36,15 @@ namespace ArashiDNS.Nous
                               Environment.NewLine +
                               $"Copyright (c) {DateTime.Now.Year} Milkey Tan. Code released under the FSL-1.1-ALv2 License"
             };
-            cmd.HelpOption("-?|-h|--help");
+            cmd.HelpOption("-?|-he|--help");
             var wOption = cmd.Option<int>("-w <TimeOut>", "等待回复的超时时间（毫秒）。", CommandOptionType.SingleValue);
-            var sOption = cmd.Option<string>("-s <IPEndPoint>", "设置的目标区域服务器的地址。[223.5.5.5:53]", CommandOptionType.SingleValue);
-            var gOption = cmd.Option<string>("-g <IPEndPoint>", "设置的全局服务器地址。。[8.8.8.8:53]", CommandOptionType.SingleValue);
-            var rOption = cmd.Option<string>("-r <Region>", "设置的目标区域。", CommandOptionType.SingleValue);
+            var sOption = cmd.Option<string>("-s <IPEndPoint>", "设置目标区域服务器的地址。[223.5.5.5:53]", CommandOptionType.SingleValue);
+            var gOption = cmd.Option<string>("-g <IPEndPoint>", "设置全局服务器地址。。[8.8.8.8:53]", CommandOptionType.SingleValue);
+            var rOption = cmd.Option<string>("-r <Region>", "设置目标区域。", CommandOptionType.SingleValue);
             var ecsOption = cmd.Option<string>("-e <IPAddress>", "设置目标区域 ECS 地址。", CommandOptionType.SingleValue);
-            var lOption = cmd.Option<string>("-l <ListenerEndPoint>", "设置的监听地址。", CommandOptionType.SingleValue);
+            var lOption = cmd.Option<string>("-l <ListenerEndPoint>", "设置监听地址。", CommandOptionType.SingleValue);
+            var logOption = cmd.Option<int>("-l <LogLevel>", "设置日志级别。" + Environment.NewLine + "0: 错误, 1: 信息, 2: 调试",
+                CommandOptionType.SingleValue);
 
             cmd.OnExecute(() =>
             {
@@ -131,10 +54,88 @@ namespace ArashiDNS.Nous
                 if (rOption.HasValue()) TargetRegion = rOption.ParsedValue;
                 if (ecsOption.HasValue()) RegionalECS = IPAddress.Parse(ecsOption.ParsedValue);
                 if (lOption.HasValue()) ListenerEndPoint = IPEndPoint.Parse(lOption.ParsedValue);
+                if (logOption.HasValue()) LogLevel = logOption.ParsedValue;
 
                 if (RegionalServer.Port == 0) RegionalServer = new IPEndPoint(RegionalServer.Address, 53);
                 if (GlobalServer.Port == 0) GlobalServer = new IPEndPoint(GlobalServer.Address, 53);
                 if (ListenerEndPoint.Port == 0) ListenerEndPoint = new IPEndPoint(ListenerEndPoint.Address, 6653);
+
+                var client = new HttpClient();
+                client.DefaultRequestHeaders.Add("User-Agent", "curl/8.5.0");
+
+                foreach (var item in new HttpClient()
+                             .GetStringAsync(
+                                 "https://fastly.jsdelivr.net/gh/felixonmars/dnsmasq-china-list@master/ns-whitelist.txt")
+                             .Result.Split('\n'))
+                {
+                    try
+                    {
+                        if (string.IsNullOrWhiteSpace(item) || item.StartsWith('#')) continue;
+                        DomainRegionMap.TryAdd(DomainName.Parse(item.Trim().Trim('.')), "CN");
+                        Console.WriteLine($"Add Ns Cache: {item.Trim().Trim('.')} -> CN");
+                    }
+                    catch (Exception e)
+                    {
+                        Console.WriteLine(e);
+                    }
+                }
+
+                foreach (var item in new HttpClient()
+                             .GetStringAsync(
+                                 "https://fastly.jsdelivr.net/gh/felixonmars/dnsmasq-china-list@master/ns-blacklist.txt")
+                             .Result.Split('\n'))
+                {
+                    try
+                    {
+                        if (string.IsNullOrWhiteSpace(item) || item.StartsWith('#')) continue;
+                        DomainRegionMap.TryAdd(DomainName.Parse(item.Trim().Trim('.')), "UN");
+                        Console.WriteLine($"Add Ns Cache: {item.Trim().Trim('.')} -> UN");
+                    }
+                    catch (Exception e)
+                    {
+                        Console.WriteLine(e);
+                    }
+                }
+
+                foreach (var item in new HttpClient()
+                             .GetStringAsync("https://fastly.jsdelivr.net/gh/mili-tan/ArashiDNS.Nous@master/ns.csv").Result
+                             .Split('\n'))
+                {
+                    try
+                    {
+                        if (string.IsNullOrWhiteSpace(item) || item.StartsWith('#')) continue;
+                        var i = item.Split(',');
+                        DomainRegionMap.TryAdd(DomainName.Parse(i[0].Trim().Trim('.')), i[1]);
+                        Console.WriteLine($"Add Ns Cache: {i[0].Trim().Trim('.')} -> {i[1]}");
+                    }
+                    catch (Exception e)
+                    {
+                        Console.WriteLine(e);
+                    }
+                }
+
+                if (!File.Exists("./GeoLite2-Country.mmdb"))
+                {
+                    Console.WriteLine("Downloading GeoLite2-Country.mmdb...");
+                    File.WriteAllBytes("./GeoLite2-Country.mmdb",
+                        new HttpClient()
+                            .GetByteArrayAsync(
+                                "https://fastly.jsdelivr.net/gh/P3TERX/GeoLite.mmdb@download/GeoLite2-Country.mmdb")
+                            .Result);
+                }
+
+                if (!File.Exists("./public_suffix_list.dat"))
+                {
+                    Console.WriteLine("Downloading public_suffix_list.dat...");
+                    File.WriteAllBytes("./public_suffix_list.dat",
+                        new HttpClient()
+                            .GetByteArrayAsync(
+                                "https://publicsuffix.org/list/public_suffix_list.dat")
+                            .Result);
+                }
+
+                CountryReader = new DatabaseReader("./GeoLite2-Country.mmdb");
+                TldExtract = new TldExtract("./public_suffix_list.dat");
 
                 QueryOptions = new DnsQueryOptions()
                 {
@@ -183,7 +184,7 @@ namespace ArashiDNS.Nous
                 msg.IsRecursionAllowed = true;
                 msg.IsRecursionDesired = true;
                 msg.AnswerRecords.Add(
-                    new TxtRecord(query.Questions.First().Name, 3600, "ArashiDNS.Aha"));
+                    new TxtRecord(query.Questions.First().Name, 3600, "ArashiDNS.Nous"));
                 e.Response = msg;
                 return;
             }
