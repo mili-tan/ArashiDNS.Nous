@@ -37,7 +37,10 @@ namespace ArashiDNS.Nous
             var client = new HttpClient();
             client.DefaultRequestHeaders.Add("User-Agent", "curl/8.5.0");
 
-            foreach (var item in new HttpClient().GetStringAsync("https://fastly.jsdelivr.net/gh/felixonmars/dnsmasq-china-list@master/ns-whitelist.txt").Result.Split('\n'))
+            foreach (var item in new HttpClient()
+                         .GetStringAsync(
+                             "https://fastly.jsdelivr.net/gh/felixonmars/dnsmasq-china-list@master/ns-whitelist.txt")
+                         .Result.Split('\n'))
             {
                 try
                 {
@@ -51,13 +54,33 @@ namespace ArashiDNS.Nous
                 }
             }
 
-            foreach (var item in new HttpClient().GetStringAsync("https://fastly.jsdelivr.net/gh/felixonmars/dnsmasq-china-list@master/ns-blacklist.txt").Result.Split('\n'))
+            foreach (var item in new HttpClient()
+                         .GetStringAsync(
+                             "https://fastly.jsdelivr.net/gh/felixonmars/dnsmasq-china-list@master/ns-blacklist.txt")
+                         .Result.Split('\n'))
             {
                 try
                 {
                     if (string.IsNullOrWhiteSpace(item) || item.StartsWith('#')) continue;
                     DomainRegionMap.TryAdd(DomainName.Parse(item.Trim().Trim('.')), "UN");
                     Console.WriteLine($"Add Ns Cache: {item.Trim().Trim('.')} -> UN");
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine(e);
+                }
+            }
+
+            foreach (var item in new HttpClient()
+                         .GetStringAsync("https://fastly.jsdelivr.net/gh/mili-tan/ArashiDNS.Nous@master/ns.csv").Result
+                         .Split('\n'))
+            {
+                try
+                {
+                    if (string.IsNullOrWhiteSpace(item) || item.StartsWith('#')) continue;
+                    var i = item.Split(',');
+                    DomainRegionMap.TryAdd(DomainName.Parse(i[0].Trim().Trim('.')), i[1]);
+                    Console.WriteLine($"Add Ns Cache: {i[0].Trim().Trim('.')} -> {i[1]}");
                 }
                 catch (Exception e)
                 {
