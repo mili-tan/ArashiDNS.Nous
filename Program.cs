@@ -20,6 +20,8 @@ namespace ArashiDNS.Nous
         public static int LogLevel = 0; // 0: Error, 1: Info, 2: Debug
         public static IPAddress RegionalECS = IPAddress.Parse("123.123.123.0");
         public static bool NoList = false;
+        public static string CountryMmdbPath = "./GeoLite2-Country.mmdb";
+        public static string PslDatPath = "./public_suffix_list.dat";
 
         public static ConcurrentDictionary<DomainName, string> DomainRegionMap = new();
         public static DnsQueryOptions QueryOptions = new()
@@ -47,6 +49,8 @@ namespace ArashiDNS.Nous
             var logOption = cmd.Option<int>("-l <LogLevel>", "设置日志级别。" + Environment.NewLine + "0: 错误, 1: 信息, 2: 调试",
                 CommandOptionType.SingleValue);
             var noListOption = cmd.Option<bool>("-n|--no-list", "不加载域名列表。", CommandOptionType.NoValue);
+            var countryMmdbOption = cmd.Option<string>("--mmdb <Path>", "设置 GeoLite2-Country.mmdb 的路径。", CommandOptionType.SingleValue);
+            var pslDatOption = cmd.Option<string>("--psl <Path>", "设置 public_suffix_list.dat 的路径。", CommandOptionType.SingleValue);
 
             cmd.OnExecute(() =>
             {
@@ -57,6 +61,9 @@ namespace ArashiDNS.Nous
                 if (ecsOption.HasValue()) RegionalECS = IPAddress.Parse(ecsOption.ParsedValue);
                 if (lOption.HasValue()) ListenerEndPoint = IPEndPoint.Parse(lOption.ParsedValue);
                 if (logOption.HasValue()) LogLevel = logOption.ParsedValue;
+                if (noListOption.HasValue()) NoList = noListOption.ParsedValue;
+                if (countryMmdbOption.HasValue()) CountryMmdbPath = countryMmdbOption.ParsedValue;
+                if (pslDatOption.HasValue()) PslDatPath = pslDatOption.ParsedValue;
 
                 if (RegionalServer.Port == 0) RegionalServer = new IPEndPoint(RegionalServer.Address, 53);
                 if (GlobalServer.Port == 0) GlobalServer = new IPEndPoint(GlobalServer.Address, 53);
@@ -120,7 +127,7 @@ namespace ArashiDNS.Nous
                     }
                 }
 
-                if (!File.Exists("./GeoLite2-Country.mmdb"))
+                if (!countryMmdbOption.HasValue() && !File.Exists("./GeoLite2-Country.mmdb"))
                 {
                     Console.WriteLine("Downloading GeoLite2-Country.mmdb...");
                     File.WriteAllBytes("./GeoLite2-Country.mmdb",
@@ -130,7 +137,7 @@ namespace ArashiDNS.Nous
                             .Result);
                 }
 
-                if (!File.Exists("./public_suffix_list.dat"))
+                if (!pslDatOption.HasValue() && !File.Exists("./public_suffix_list.dat"))
                 {
                     Console.WriteLine("Downloading public_suffix_list.dat...");
                     File.WriteAllBytes("./public_suffix_list.dat",
@@ -140,8 +147,8 @@ namespace ArashiDNS.Nous
                             .Result);
                 }
 
-                CountryReader = new DatabaseReader("./GeoLite2-Country.mmdb");
-                TldExtract = new TldExtract("./public_suffix_list.dat");
+                CountryReader = new DatabaseReader(CountryMmdbPath);
+                TldExtract = new TldExtract(PslDatPath);
 
                 QueryOptions = new DnsQueryOptions()
                 {
