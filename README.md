@@ -7,8 +7,8 @@
  
 > 请确保已经 [安装 .NET SDK](https://learn.microsoft.com/zh-cn/dotnet/core/install/linux) 运行环境
 ```
-git clone https://github.com/mili-tan/ArashiDNS.Aha
-cd ArashiDNS.Aha
+git clone https://github.com/mili-tan/ArashiDNS.Nous
+cd ArashiDNS.Nous
 dotnet run -c Release -g 8.8.8.8:53 -s 223.5.5.5:53 -r CN
 ```
 或者从 Releases 下载预编译二进制。
@@ -40,15 +40,15 @@ Options:
 ```mermaid
 graph LR
     A[收到DNS查询] --> B{解析域名结构}
-    B -->|提取根域名| C[查询根域名NS记录]
+    B -->|提取根域名| C[查询根域名 NS 记录]
     C --> D[获取权威服务器名称]
-    D --> E[查询权威服务器IP]
-    E --> F{IP在目标区域？}
-    F -->|是| G[使用区域DNS解析]
-    F -->|否| H[使用全局DNS解析]
-    H --> I{响应含CNAME？}
+    D --> E[查询权威服务器 IP]
+    E --> F{IP 在目标区域？}
+    F -->|是| G[使用区域 DNS 解析]
+    F -->|否| H[使用全局 DNS 解析]
+    H --> I{响应含 CNAME？}
     I -->|否| K[返回响应]
-    I -->|是| J[提取CNAME根域名]
+    I -->|是| J[提取 CNAME 根域名]
     J --> C
     G --> K
     K --> L[返回最终响应]
