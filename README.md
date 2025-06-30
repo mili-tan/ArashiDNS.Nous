@@ -35,6 +35,24 @@ Options:
   --mmdb <Path>          设置 GeoLite2-Country.mmdb 的路径。
   --psl <Path>           设置 public_suffix_list.dat 的路径。
 ```
+## How it works?
+
+```mermaid
+graph LR
+    A[收到DNS查询] --> B{解析域名结构}
+    B -->|提取根域名| C[查询根域名NS记录]
+    C --> D[获取权威服务器名称]
+    D --> E[查询权威服务器IP]
+    E --> F{IP在目标区域？}
+    F -->|是| G[使用区域DNS解析]
+    F -->|否| H[使用全局DNS解析]
+    H --> I{响应含CNAME？}
+    I -->|否| K[返回响应]
+    I -->|是| J[提取CNAME根域名]
+    J --> C
+    G --> K
+    K --> L[返回最终响应]
+```
 
 ## License
 
