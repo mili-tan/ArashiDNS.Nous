@@ -29,7 +29,7 @@ Options:
   -r <Region>            设置目标区域。[CN]
   -e <IPAddress>         设置目标区域 ECS 地址。[123.123.123.123]
   -l <ListenerEndPoint>  设置监听地址。[0.0.0.0:6653]
-  -l <LogLevel>          设置日志级别。
+  --log <LogLevel>       设置日志级别。
                          0: 错误, 1: 信息, 2: 调试
   -n|--no-list           不加载 NS 域名列表。
   --mmdb <Path>          设置 GeoLite2-Country.mmdb 的路径。
