@@ -40,4 +40,6 @@ Options:
 
 Copyright (c) 2024 Milkey Tan. Code released under the [FSL-1.1-ALv2 License](https://github.com/mili-tan/ArashiDNS.Nous/blob/main/LICENSE). 
 
+若需要用于商用生产环境，请购买使用授权。
+
 <sup>ArashiDNS™ is a trademark of Milkey Tan.</sup>
