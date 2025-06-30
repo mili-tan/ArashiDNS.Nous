@@ -43,9 +43,9 @@ namespace ArashiDNS.Nous
             var wOption = cmd.Option<int>("-w <TimeOut>", "等待回复的超时时间（毫秒）。", CommandOptionType.SingleValue);
             var sOption = cmd.Option<string>("-s <IPEndPoint>", "设置目标区域服务器的地址。[223.5.5.5:53]", CommandOptionType.SingleValue);
             var gOption = cmd.Option<string>("-g <IPEndPoint>", "设置全局服务器地址。。[8.8.8.8:53]", CommandOptionType.SingleValue);
-            var rOption = cmd.Option<string>("-r <Region>", "设置目标区域。", CommandOptionType.SingleValue);
-            var ecsOption = cmd.Option<string>("-e <IPAddress>", "设置目标区域 ECS 地址。", CommandOptionType.SingleValue);
-            var lOption = cmd.Option<string>("-l <ListenerEndPoint>", "设置监听地址。", CommandOptionType.SingleValue);
+            var rOption = cmd.Option<string>("-r <Region>", "设置目标区域。[CN]", CommandOptionType.SingleValue);
+            var ecsOption = cmd.Option<string>("-e <IPAddress>", "设置目标区域 ECS 地址。[123.123.123.123]", CommandOptionType.SingleValue);
+            var lOption = cmd.Option<string>("-l <ListenerEndPoint>", "设置监听地址。[0.0.0.0:6653]", CommandOptionType.SingleValue);
             var logOption = cmd.Option<int>("-l <LogLevel>", "设置日志级别。" + Environment.NewLine + "0: 错误, 1: 信息, 2: 调试",
                 CommandOptionType.SingleValue);
             var noListOption = cmd.Option<bool>("-n|--no-list", "不加载域名列表。", CommandOptionType.NoValue);
@@ -58,7 +58,6 @@ namespace ArashiDNS.Nous
                 if (sOption.HasValue()) RegionalServer = IPEndPoint.Parse(sOption.ParsedValue);
                 if (gOption.HasValue()) GlobalServer = IPEndPoint.Parse(gOption.ParsedValue);
                 if (rOption.HasValue()) TargetRegion = rOption.ParsedValue;
-                if (ecsOption.HasValue()) RegionalECS = IPAddress.Parse(ecsOption.ParsedValue);
                 if (lOption.HasValue()) ListenerEndPoint = IPEndPoint.Parse(lOption.ParsedValue);
                 if (logOption.HasValue()) LogLevel = logOption.ParsedValue;
                 if (noListOption.HasValue()) NoList = noListOption.ParsedValue;
@@ -71,6 +70,26 @@ namespace ArashiDNS.Nous
 
                 var client = new HttpClient();
                 client.DefaultRequestHeaders.Add("User-Agent", "curl/8.5.0");
+
+                if (ecsOption.HasValue()) RegionalECS = IPAddress.Parse(ecsOption.ParsedValue);
+                else
+                {
+                    try
+                    {
+                        var info = client.GetStringAsync("https://www.cloudflare-cn.com/cdn-cgi/trace").Result;
+                        if (info.Contains("loc=CN"))
+                            RegionalECS = IPAddress.Parse(info.Split('\n').First(i => i.StartsWith("ip=")).Split("=")
+                                .LastOrDefault()?.Trim() ?? string.Empty);
+                    }
+                    catch (Exception)
+                    {
+                        RegionalECS =
+                            IPAddress.Parse(client.GetStringAsync("http://whatismyip.akamai.com/").Result);
+                    }
+
+                    Console.WriteLine("Regional ECS: " + RegionalECS);
+                }
+
 
                 if (!NoList)
                 {
