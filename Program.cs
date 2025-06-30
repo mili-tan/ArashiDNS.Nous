@@ -42,13 +42,13 @@ namespace ArashiDNS.Nous
             cmd.HelpOption("-?|-he|--help");
             var wOption = cmd.Option<int>("-w <TimeOut>", "等待回复的超时时间（毫秒）。", CommandOptionType.SingleValue);
             var sOption = cmd.Option<string>("-s <IPEndPoint>", "设置目标区域服务器的地址。[223.5.5.5:53]", CommandOptionType.SingleValue);
-            var gOption = cmd.Option<string>("-g <IPEndPoint>", "设置全局服务器地址。。[8.8.8.8:53]", CommandOptionType.SingleValue);
+            var gOption = cmd.Option<string>("-g <IPEndPoint>", "设置全局服务器地址。[8.8.8.8:53]", CommandOptionType.SingleValue);
             var rOption = cmd.Option<string>("-r <Region>", "设置目标区域。[CN]", CommandOptionType.SingleValue);
             var ecsOption = cmd.Option<string>("-e <IPAddress>", "设置目标区域 ECS 地址。[123.123.123.123]", CommandOptionType.SingleValue);
             var lOption = cmd.Option<string>("-l <ListenerEndPoint>", "设置监听地址。[0.0.0.0:6653]", CommandOptionType.SingleValue);
             var logOption = cmd.Option<int>("-l <LogLevel>", "设置日志级别。" + Environment.NewLine + "0: 错误, 1: 信息, 2: 调试",
                 CommandOptionType.SingleValue);
-            var noListOption = cmd.Option<bool>("-n|--no-list", "不加载域名列表。", CommandOptionType.NoValue);
+            var noListOption = cmd.Option<bool>("-n|--no-list", "不加载 NS 域名列表。", CommandOptionType.NoValue);
             var countryMmdbOption = cmd.Option<string>("--mmdb <Path>", "设置 GeoLite2-Country.mmdb 的路径。", CommandOptionType.SingleValue);
             var pslDatOption = cmd.Option<string>("--psl <Path>", "设置 public_suffix_list.dat 的路径。", CommandOptionType.SingleValue);
 
