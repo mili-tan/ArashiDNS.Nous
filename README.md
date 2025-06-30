@@ -31,7 +31,7 @@ Options:
   -l <ListenerEndPoint>  设置监听地址。[0.0.0.0:6653]
   -l <LogLevel>          设置日志级别。
                          0: 错误, 1: 信息, 2: 调试
-  -n|--no-list           不加载域名列表。
+  -n|--no-list           不加载 NS 域名列表。
   --mmdb <Path>          设置 GeoLite2-Country.mmdb 的路径。
   --psl <Path>           设置 public_suffix_list.dat 的路径。
 ```
@@ -56,7 +56,7 @@ graph LR
 
 ## License
 
-Copyright (c) 2024 Milkey Tan. Code released under the [FSL-1.1-ALv2 License](https://github.com/mili-tan/ArashiDNS.Nous/blob/main/LICENSE). 
+Copyright (c) 2024 Milkey Tan. Code released under the [FSL-1.1-ALv2 License](https://fsl.software/). 
 
 若需要用于商用生产环境，请购买使用授权。
 
