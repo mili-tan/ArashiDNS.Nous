@@ -7,7 +7,7 @@
     <Nullable>enable</Nullable>
     <PublishSingleFile>true</PublishSingleFile>
     <!--<PublishAot>true</PublishAot>-->
-    <!--<PublishTrimmed>true</PublishTrimmed>-->
+    <PublishTrimmed>true</PublishTrimmed>
     <StripSymbols>true</StripSymbols>
   </PropertyGroup>
 
@@ -18,5 +18,15 @@
     <PackageReference Include="McMaster.Extensions.CommandLineUtils" Version="4.1.1" />
     <PackageReference Include="TldExtract" Version="1.0.0" />
   </ItemGroup>
+
+  <ItemGroup>
+    <RdXmlFile Include="./rd.xml" />
+    <TrimmerRootAssembly Include="TldExtract" />
+    <TrimmerRootAssembly Include="MaxMind.Db" />
+    <TrimmerRootAssembly Include="MaxMind.GeoIP2" />
+    <TrimmerRootAssembly Include="ARSoft.Tools.Net" />
+    <TrimmerRootAssembly Include="McMaster.Extensions.CommandLineUtils" />
+  </ItemGroup>
+
 
 </Project>

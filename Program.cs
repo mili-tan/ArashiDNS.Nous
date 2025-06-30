@@ -17,7 +17,7 @@ namespace ArashiDNS.Nous
         public static TldExtract TldExtract;
         public static string TargetRegion = "CN";
         public static int TimeOut = 3000;
-        public static int LogLevel = 0; // 0: Error, 1: Info, 2: Debug
+        public static int LogLevel = 1; // 0: Error, 1: Info, 2: Debug
         public static IPAddress RegionalECS = IPAddress.Parse("123.123.123.0");
         public static bool NoList = false;
         public static string CountryMmdbPath = "./GeoLite2-Country.mmdb";
@@ -129,6 +129,8 @@ namespace ArashiDNS.Nous
 
                 if (!countryMmdbOption.HasValue() && !File.Exists("./GeoLite2-Country.mmdb"))
                 {
+                    Console.WriteLine(
+                        "This product includes GeoLite2 data created by MaxMind, available from https://www.maxmind.com");
                     Console.WriteLine("Downloading GeoLite2-Country.mmdb...");
                     File.WriteAllBytes("./GeoLite2-Country.mmdb",
                         new HttpClient()
@@ -215,19 +217,19 @@ namespace ArashiDNS.Nous
                 };
             }
 
-            Console.WriteLine(questExtract);
-            var questRootName = DomainName.Parse(string.Join('.', string.IsNullOrWhiteSpace(questExtract.tld)
+            if (LogLevel >= 2) Console.WriteLine(questExtract);
+            var questRName = DomainName.Parse(string.Join('.', string.IsNullOrWhiteSpace(questExtract.tld)
                 ? questName.Labels.TakeLast(2)
                 : [questExtract.root, questExtract.tld]));
             var response = query.CreateResponseInstance();
-            var (rootNsIs,roorNs) = await FromNameGetNsIs(questRootName);
+            var (RNsIs,roorNs) = await FromNameGetNsIs(questRName);
 
             if (LogLevel >= 1)
-                Console.WriteLine("RootNAME Result: " + string.Join(" | ", questName.ToString(),
-                    questRootName.ToString(), "-",
-                    roorNs.ToString(), rootNsIs.ToString()));
+                Console.WriteLine("RNAME Result: " + string.Join(" | ", questName.ToString(),
+                    questRName.ToString(), "-",
+                    roorNs.ToString(), RNsIs.ToString()));
 
-            if (rootNsIs)
+            if (RNsIs)
                 response = await new DnsClient([RegionalServer.Address], [new UdpClientTransport(RegionalServer.Port)],queryTimeout: TimeOut).SendMessageAsync(query);
             else
             {
@@ -238,14 +240,14 @@ namespace ArashiDNS.Nous
                         (response.AnswerRecords.LastOrDefault(x => x.RecordType == RecordType.CName) as CNameRecord)
                         ?.CanonicalName;
                     var cnameExtract = TldExtract.Extract(cName.ToString().Trim().Trim('.'));
-                    var cnameRootName = DomainName.Parse(string.Join('.', string.IsNullOrWhiteSpace(cnameExtract.tld)
+                    var cnameRName = DomainName.Parse(string.Join('.', string.IsNullOrWhiteSpace(cnameExtract.tld)
                         ? cName.Labels.TakeLast(2)
                         : [cnameExtract.root, cnameExtract.tld]));
-                    var (cnameNsIs, cnameNs) = await FromNameGetNsIs(cnameRootName);
+                    var (cnameNsIs, cnameNs) = await FromNameGetNsIs(cnameRName);
 
                     if (LogLevel >= 1)
                         Console.WriteLine("CNAME Result: " + string.Join(" | ", questName.ToString(), cName.ToString(), "-",
-                            cnameRootName.ToString(), cnameNs.ToString(), "-", cnameNsIs.ToString()));
+                            cnameRName.ToString(), cnameNs.ToString(), "-", cnameNsIs.ToString()));
 
                     if (cnameNsIs)
                         response = await new DnsClient([RegionalServer.Address], [new UdpClientTransport(RegionalServer.Port)], queryTimeout: TimeOut).SendMessageAsync(query);
@@ -314,13 +316,13 @@ namespace ArashiDNS.Nous
                 var nsCountry = CountryReader.Country(nsAddress).Country.IsoCode ?? "UN";
 
                 var nsExtract = TldExtract.Extract(nsName.ToString().Trim().Trim('.'));
-                var nsRootName = DomainName.Parse(string.Join('.', string.IsNullOrWhiteSpace(nsExtract.tld)
+                var nsRName = DomainName.Parse(string.Join('.', string.IsNullOrWhiteSpace(nsExtract.tld)
                     ? nsName.Labels.TakeLast(2)
                     : [nsExtract.root, nsExtract.tld]));
 
                 if (LogLevel >= 2) Console.WriteLine("NS GEO: " + nsCountry);
                 DomainRegionMap.TryAdd(name, nsCountry);
-                DomainRegionMap.TryAdd(nsRootName, nsCountry);
+                DomainRegionMap.TryAdd(nsRName, nsCountry);
                 return (string.Equals(nsCountry, TargetRegion, StringComparison.CurrentCultureIgnoreCase), nsName);
             }
             catch (Exception e)

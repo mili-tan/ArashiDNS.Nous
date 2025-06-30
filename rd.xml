@@ -1,0 +1,16 @@
+﻿<Directives xmlns="http://schemas.microsoft.com/netfx/2013/01/metadata">
+  <Application>
+    <Assembly Name="ARSoft.Tools.Net">
+      <Type Name="ARSoft.Tools.Net.Dns" Dynamic="Required All" />
+    </Assembly>
+    <Assembly Name="TldExtract">
+      <Type Name="NStack" Dynamic="Required All" />
+    </Assembly>
+    <Assembly Name="MaxMind.GeoIP2">
+      <Type Name="MaxMind.GeoIP2" Dynamic="Required All" />
+    </Assembly>
+    <Assembly Name="MaxMind.Db">
+      <Type Name="MaxMind.Db" Dynamic="Required All" />
+    </Assembly>
+  </Application>
+</Directives>
