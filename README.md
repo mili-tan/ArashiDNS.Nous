@@ -11,6 +11,10 @@ git clone https://github.com/mili-tan/ArashiDNS.Nous
 cd ArashiDNS.Nous
 dotnet run -c Release -g 8.8.8.8:53 -s 223.5.5.5:53 -r CN
 ```
+或者使用 Docker：
+```
+docker run -d -p 127.0.0.1:6653:6653 -p 127.0.0.1:6653:6653/udp ghcr.io/mili-tan/arashidns.nous -g 8.8.8.8:53 -s 223.5.5.5:53 -r CN -l 0.0.0.0:6653
+```
 或者从 Releases 下载预编译二进制。
 
 --------
