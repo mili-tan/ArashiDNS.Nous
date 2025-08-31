@@ -240,7 +240,7 @@ namespace ArashiDNS.Nous
             var questRName = DomainName.Parse(string.Join('.', string.IsNullOrWhiteSpace(questExtract.tld)
                 ? questName.Labels.TakeLast(2)
                 : [questExtract.root, questExtract.tld]));
-            var response = query.CreateResponseInstance();
+            DnsMessage? response;
             var (RNsIs,roorNs) = await FromNameGetNsIs(questRName);
 
             if (LogLevel >= 1)
