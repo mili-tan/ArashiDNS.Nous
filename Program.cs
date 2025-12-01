@@ -23,11 +23,24 @@ namespace ArashiDNS.Nous
         public static string CountryMmdbPath = "./GeoLite2-Country.mmdb";
         public static string PslDatPath = "./public_suffix_list.dat";
 
-        public static ConcurrentDictionary<DomainName, string> DomainRegionMap = new();
+        public static Timer CacheCleanupTimer;
+
+        public class CacheItem<T>
+        {
+            public T Value { get; set; }
+            public DateTime ExpiryTime { get; set; }
+            public bool IsExpired => DateTime.UtcNow >= ExpiryTime;
+        }
+
+        public static ConcurrentDictionary<DomainName, CacheItem<string>> DomainRegionMap = new();
+        public static ConcurrentDictionary<string, CacheItem<DnsMessage>> DnsResponseCache = new();
+        public static ConcurrentDictionary<string, CacheItem<DnsMessage>> NsQueryCache = new();
+
+
         public static DnsQueryOptions QueryOptions = new()
         {
             IsEDnsEnabled = true,
-            EDnsOptions = new OptRecord { Options = { new ClientSubnetOption(24, RegionalECS) } }
+            EDnsOptions = new OptRecord {Options = {new ClientSubnetOption(24, RegionalECS)}}
         };
 
         static void Main(string[] args)
@@ -41,16 +54,22 @@ namespace ArashiDNS.Nous
             };
             cmd.HelpOption("-?|-he|--help");
             var wOption = cmd.Option<int>("-w <TimeOut>", "等待回复的超时时间（毫秒）。", CommandOptionType.SingleValue);
-            var sOption = cmd.Option<string>("-s <IPEndPoint>", "设置目标区域服务器的地址。[223.5.5.5:53]", CommandOptionType.SingleValue);
-            var gOption = cmd.Option<string>("-g <IPEndPoint>", "设置全局服务器地址。[8.8.8.8:53]", CommandOptionType.SingleValue);
+            var sOption = cmd.Option<string>("-s <IPEndPoint>", "设置目标区域服务器的地址。[223.5.5.5:53]",
+                CommandOptionType.SingleValue);
+            var gOption =
+                cmd.Option<string>("-g <IPEndPoint>", "设置全局服务器地址。[8.8.8.8:53]", CommandOptionType.SingleValue);
             var rOption = cmd.Option<string>("-r <Region>", "设置目标区域。[CN]", CommandOptionType.SingleValue);
-            var ecsOption = cmd.Option<string>("-e <IPAddress>", "设置目标区域 ECS 地址。[123.123.123.123]", CommandOptionType.SingleValue);
-            var lOption = cmd.Option<string>("-l <ListenerEndPoint>", "设置监听地址。[0.0.0.0:6653]", CommandOptionType.SingleValue);
+            var ecsOption = cmd.Option<string>("-e <IPAddress>", "设置目标区域 ECS 地址。[123.123.123.123]",
+                CommandOptionType.SingleValue);
+            var lOption = cmd.Option<string>("-l <ListenerEndPoint>", "设置监听地址。[0.0.0.0:6653]",
+                CommandOptionType.SingleValue);
             var logOption = cmd.Option<int>("--log <LogLevel>", "设置日志级别。" + Environment.NewLine + "0: 错误, 1: 信息, 2: 调试",
                 CommandOptionType.SingleValue);
             var noListOption = cmd.Option<bool>("-n|--no-list", "不加载 NS 域名列表。", CommandOptionType.NoValue);
-            var countryMmdbOption = cmd.Option<string>("--mmdb <Path>", "设置 GeoLite2-Country.mmdb 的路径。", CommandOptionType.SingleValue);
-            var pslDatOption = cmd.Option<string>("--psl <Path>", "设置 public_suffix_list.dat 的路径。", CommandOptionType.SingleValue);
+            var countryMmdbOption = cmd.Option<string>("--mmdb <Path>", "设置 GeoLite2-Country.mmdb 的路径。",
+                CommandOptionType.SingleValue);
+            var pslDatOption = cmd.Option<string>("--psl <Path>", "设置 public_suffix_list.dat 的路径。",
+                CommandOptionType.SingleValue);
 
             cmd.OnExecute(() =>
             {
@@ -101,7 +120,8 @@ namespace ArashiDNS.Nous
                         try
                         {
                             if (string.IsNullOrWhiteSpace(item) || item.StartsWith('#')) continue;
-                            DomainRegionMap.TryAdd(DomainName.Parse(item.Trim().Trim('.')), "CN");
+                            DomainRegionMap.Set(DomainName.Parse(item.Trim().Trim('.')),
+                                new CacheItem<string> {Value = "CN", ExpiryTime = DateTime.UtcNow.AddDays(30)});
                             Console.WriteLine($"Add Ns Cache: {item.Trim().Trim('.')} -> CN");
                         }
                         catch (Exception e)
@@ -118,7 +138,8 @@ namespace ArashiDNS.Nous
                         try
                         {
                             if (string.IsNullOrWhiteSpace(item) || item.StartsWith('#')) continue;
-                            DomainRegionMap.TryAdd(DomainName.Parse(item.Trim().Trim('.')), "UN");
+                            DomainRegionMap.Set(DomainName.Parse(item.Trim().Trim('.')),
+                                new CacheItem<string> {Value = "UN", ExpiryTime = DateTime.UtcNow.AddDays(30)});
                             Console.WriteLine($"Add Ns Cache: {item.Trim().Trim('.')} -> UN");
                         }
                         catch (Exception e)
@@ -136,7 +157,8 @@ namespace ArashiDNS.Nous
                         {
                             if (string.IsNullOrWhiteSpace(item) || item.StartsWith('#')) continue;
                             var i = item.Split(',');
-                            DomainRegionMap.TryAdd(DomainName.Parse(i[0].Trim().Trim('.')), i[1]);
+                            DomainRegionMap.Set(DomainName.Parse(i[0].Trim().Trim('.')),
+                                new CacheItem<string> {Value = i[1], ExpiryTime = DateTime.UtcNow.AddDays(30)});
                             Console.WriteLine($"Add Ns Cache: {i[0].Trim().Trim('.')} -> {i[1]}");
                         }
                         catch (Exception e)
@@ -182,6 +204,8 @@ namespace ArashiDNS.Nous
                 dnsServer.QueryReceived += DnsServerOnQueryReceived;
                 dnsServer.Start();
 
+                CleanupCacheTask();
+
                 Console.WriteLine("Now listening on: " + ListenerEndPoint);
                 Console.WriteLine("Application started. Press Ctrl+C / q to shut down.");
                 if (!Console.IsInputRedirected && Console.KeyAvailable)
@@ -211,7 +235,8 @@ namespace ArashiDNS.Nous
                 return;
             }
 
-            if (query.Questions.First().RecordClass == RecordClass.Chaos && query.Questions.First().RecordType == RecordType.Txt &&
+            if (query.Questions.First().RecordClass == RecordClass.Chaos &&
+                query.Questions.First().RecordType == RecordType.Txt &&
                 query.Questions.First().Name.IsEqualOrSubDomainOf(DomainName.Parse("version.bind")))
             {
                 var msg = query.CreateResponseInstance();
@@ -224,6 +249,17 @@ namespace ArashiDNS.Nous
             }
 
             var questName = query.Questions.First().Name;
+            var questType = query.Questions.First().RecordType;
+            var cacheKey = $"{questName}|{questType}";
+
+            if (DnsResponseCache.TryGetValue(cacheKey, out var cacheItem) && !cacheItem.IsExpired)
+            {
+                if (LogLevel >= 2) Console.WriteLine($"DNS Cache Hit: {questName} {questType}");
+                e.Response = cacheItem.Value;
+                e.Response.TransactionID = query.TransactionID;
+                return;
+            }
+
             var questExtract = TldExtract.Extract(questName.ToString().Trim().Trim('.'));
 
             if (!query.IsEDnsEnabled || (query.EDnsOptions != null && query.EDnsOptions.Options.Any(x =>
@@ -241,7 +277,7 @@ namespace ArashiDNS.Nous
                 ? questName.Labels.TakeLast(2)
                 : [questExtract.root, questExtract.tld]));
             DnsMessage? response;
-            var (RNsIs,roorNs) = await FromNameGetNsIs(questRName);
+            var (RNsIs, roorNs) = await FromNameGetNsIs(questRName);
 
             if (LogLevel >= 1)
                 Console.WriteLine("RNAME Result: " + string.Join(" | ", questName.ToString(),
@@ -249,10 +285,15 @@ namespace ArashiDNS.Nous
                     roorNs.ToString(), RNsIs.ToString()));
 
             if (RNsIs)
-                response = await new DnsClient([RegionalServer.Address], [new UdpClientTransport(RegionalServer.Port)],queryTimeout: TimeOut).SendMessageAsync(query);
+                response = await new DnsClient([RegionalServer.Address], [
+                    new UdpClientTransport(RegionalServer.Port),
+                    new TcpClientTransport(RegionalServer.Port)
+                ], queryTimeout: TimeOut).SendMessageAsync(query);
             else
             {
-                response = await new DnsClient([GlobalServer.Address], [new UdpClientTransport(GlobalServer.Port)], queryTimeout: TimeOut).SendMessageAsync(query);
+                response = await new DnsClient([GlobalServer.Address],
+                    [new UdpClientTransport(RegionalServer.Port), new TcpClientTransport(RegionalServer.Port)],
+                    queryTimeout: TimeOut).SendMessageAsync(query);
                 if (response != null && response.AnswerRecords.Any(x => x.RecordType == RecordType.CName))
                 {
                     var cName =
@@ -265,13 +306,31 @@ namespace ArashiDNS.Nous
                     var (cnameNsIs, cnameNs) = await FromNameGetNsIs(cnameRName);
 
                     if (LogLevel >= 1)
-                        Console.WriteLine("CNAME Result: " + string.Join(" | ", questName.ToString(), cName.ToString(), "-",
+                        Console.WriteLine("CNAME Result: " + string.Join(" | ", questName.ToString(), cName.ToString(),
+                            "-",
                             cnameRName.ToString(), cnameNs.ToString(), "-", cnameNsIs.ToString()));
 
                     if (cnameNsIs)
-                        response = await new DnsClient([RegionalServer.Address], [new UdpClientTransport(RegionalServer.Port)], queryTimeout: TimeOut).SendMessageAsync(query);
+                        response = await new DnsClient([RegionalServer.Address],
+                            [new UdpClientTransport(RegionalServer.Port), new TcpClientTransport(RegionalServer.Port)],
+                            queryTimeout: TimeOut).SendMessageAsync(query);
                 }
             }
+
+            if (response != null && response.ReturnCode == ReturnCode.NoError && response.AnswerRecords.Any())
+            {
+                var minTTL = Math.Max(response.AnswerRecords.Min(r => r.TimeToLive), 60);
+                var expiryTime = DateTime.UtcNow.AddSeconds(minTTL);
+
+                DnsResponseCache.Set(cacheKey, new CacheItem<DnsMessage>
+                {
+                    Value = response,
+                    ExpiryTime = expiryTime
+                });
+
+                if (LogLevel >= 2) Console.WriteLine($"DNS Cache Set: {questName} {questType} TTL: {minTTL}s");
+            }
+
             if (LogLevel >= 1)
                 Console.WriteLine("-----------------------------------");
             e.Response = response;
@@ -283,56 +342,134 @@ namespace ArashiDNS.Nous
             {
                 if (LogLevel >= 2) Console.WriteLine("Root Name: " + name);
 
-                var findName = DomainRegionMap.Keys.FirstOrDefault(name.IsEqualOrSubDomainOf);
-                if (findName != null)
+                if (DomainRegionMap.TryGetValue(name, out var cacheItem) && !cacheItem.IsExpired)
                 {
                     if (LogLevel >= 2)
-                        Console.WriteLine($"Found Cache: {findName} -> {DomainRegionMap[findName]}");
-                    return (string.Equals(DomainRegionMap[findName], TargetRegion, StringComparison.CurrentCultureIgnoreCase), findName);
+                        Console.WriteLine($"Found Cache: {name} -> {cacheItem.Value}");
+                    return (string.Equals(cacheItem.Value, TargetRegion, StringComparison.CurrentCultureIgnoreCase),
+                        name);
                 }
 
-                var client = new DnsClient([GlobalServer.Address], [new UdpClientTransport(GlobalServer.Port)], queryTimeout: TimeOut);
+                var findName = DomainRegionMap.Keys.FirstOrDefault(name.IsEqualOrSubDomainOf);
+                if (findName != null && DomainRegionMap.TryGetValue(findName, out var parentCache) &&
+                    !parentCache.IsExpired)
+                {
+                    if (LogLevel >= 2)
+                        Console.WriteLine($"Found Parent Cache: {findName} -> {parentCache.Value}");
+                    return (string.Equals(parentCache.Value, TargetRegion, StringComparison.CurrentCultureIgnoreCase),
+                        findName);
+                }
+
+                var nsCacheKey = $"NS|{name}";
+                if (NsQueryCache.TryGetValue(nsCacheKey, out var nsCacheItem) && !nsCacheItem.IsExpired)
+                {
+                    if (LogLevel >= 2) Console.WriteLine($"NS Cache Hit: {name}");
+                    var cachedNsMsg = nsCacheItem.Value;
+
+                    if (cachedNsMsg != null && cachedNsMsg.AnswerRecords.Any(x => x.RecordType == RecordType.Ns))
+                    {
+                        var nRecord = cachedNsMsg.AnswerRecords.First(x => x.RecordType == RecordType.Ns) as NsRecord;
+                        var nName = nRecord?.NameServer;
+
+                        if (DomainRegionMap.TryGetValue(nName, out var nsCache) && !nsCache.IsExpired)
+                            return (
+                                string.Equals(nsCache.Value, TargetRegion, StringComparison.CurrentCultureIgnoreCase),
+                                nName);
+                    }
+                }
+
+                var client = new DnsClient([GlobalServer.Address],
+                    [new UdpClientTransport(RegionalServer.Port), new TcpClientTransport(RegionalServer.Port)],
+                    queryTimeout: TimeOut);
                 var nsMsg = await client.ResolveAsync(name, RecordType.Ns, options: QueryOptions);
                 if (nsMsg == null || !nsMsg.AnswerRecords.Any()) nsMsg = await client.ResolveAsync(name, RecordType.Ns);
                 if (LogLevel >= 2) Console.WriteLine("NS RCode: " + nsMsg.ReturnCode);
+
+                if (nsMsg != null && nsMsg.AnswerRecords.Any())
+                {
+                    var nsTTL = Math.Max(nsMsg.AnswerRecords.First().TimeToLive, 60);
+                    NsQueryCache.Set(nsCacheKey, new CacheItem<DnsMessage>
+                    {
+                        Value = nsMsg,
+                        ExpiryTime = DateTime.UtcNow.AddSeconds(nsTTL)
+                    });
+                }
 
                 var nsRecord = nsMsg.AnswerRecords.OrderBy(x => x.Name.Labels.First())
                     .FirstOrDefault(x => x.RecordType == RecordType.Ns);
                 if (LogLevel >= 2) Console.WriteLine("NS Record: " + nsRecord);
 
                 var nsName = (nsRecord as NsRecord)?.NameServer;
+                var nsTTLValue = nsRecord?.TimeToLive ?? 86400;
 
                 if (nsName.ToString().Contains("awsdns-cn-"))
                 {
                     if (LogLevel >= 2) Console.WriteLine($"Found AWSDNS-CN: {nsName} -> CN");
-                    DomainRegionMap.TryAdd(name, "CN");
+                    DomainRegionMap.Set(name, new CacheItem<string>
+                    {
+                        Value = "CN",
+                        ExpiryTime = DateTime.UtcNow.AddSeconds(nsTTLValue * 6)
+                    });
                     return (string.Equals("CN", TargetRegion, StringComparison.CurrentCultureIgnoreCase),
                         DomainName.Parse("awsdns-cn-1.com"));
                 }
+
                 if (nsName.ToString().Contains("awsdns-"))
                 {
                     if (LogLevel >= 2) Console.WriteLine($"Found AWSDNS: {nsName} -> US");
-                    DomainRegionMap.TryAdd(name, "US");
-                    return (string.Equals("US", TargetRegion, StringComparison.CurrentCultureIgnoreCase), DomainName.Parse("awsdns-1.com"));
+                    DomainRegionMap.Set(name, new CacheItem<string>
+                    {
+                        Value = "US",
+                        ExpiryTime = DateTime.UtcNow.AddSeconds(nsTTLValue * 6)
+                    });
+                    return (string.Equals("US", TargetRegion, StringComparison.CurrentCultureIgnoreCase),
+                        DomainName.Parse("awsdns-1.com"));
                 }
 
                 var findNs = DomainRegionMap.Keys.FirstOrDefault(nsName.IsEqualOrSubDomainOf);
-                if (findNs != null)
+                if (findNs != null && DomainRegionMap.TryGetValue(findNs, out var nsRegionCache) &&
+                    !nsRegionCache.IsExpired)
                 {
-                    if (LogLevel >= 2) Console.WriteLine($"Found NS Cache: {findNs} -> {DomainRegionMap[findNs]}");
-                    DomainRegionMap.TryAdd(name, DomainRegionMap[findNs]);
-                    return (string.Equals(DomainRegionMap[findNs], TargetRegion, StringComparison.CurrentCultureIgnoreCase), findNs);
+                    if (LogLevel >= 2) Console.WriteLine($"Found NS Cache: {findNs} -> {nsRegionCache.Value}");
+                    DomainRegionMap.Set(name, new CacheItem<string>
+                    {
+                        Value = nsRegionCache.Value,
+                        ExpiryTime = DateTime.UtcNow.AddSeconds(nsTTLValue * 6)
+                    });
+                    return (string.Equals(nsRegionCache.Value, TargetRegion, StringComparison.CurrentCultureIgnoreCase),
+                        findNs);
                 }
 
-                var nsAMsg = (await client.ResolveAsync(nsName, options: QueryOptions));
-                if (nsAMsg == null || !nsAMsg.AnswerRecords.Any()) nsAMsg = await client.ResolveAsync(nsName);
+                var nsACacheKey = $"A|{nsName}";
+                DnsMessage nsAMsg = null;
+                if (NsQueryCache.TryGetValue(nsACacheKey, out var nsACache) && !nsACache.IsExpired)
+                {
+                    nsAMsg = nsACache.Value;
+                    if (LogLevel >= 2) Console.WriteLine($"NS-A Cache Hit: {nsName}");
+                }
+                else
+                {
+                    nsAMsg = await client.ResolveAsync(nsName, options: QueryOptions);
+                    if (nsAMsg == null || !nsAMsg.AnswerRecords.Any()) nsAMsg = await client.ResolveAsync(nsName);
 
-                if (LogLevel >= 2) Console.WriteLine("NS-A RCode: " + nsAMsg.ReturnCode);
-                if (LogLevel >= 2) Console.WriteLine("NS-A Record: " + nsAMsg.AnswerRecords.FirstOrDefault());
+                    if (nsAMsg != null && nsAMsg.AnswerRecords.Any())
+                    {
+                        var nsATTL = Math.Max(nsAMsg.AnswerRecords.First().TimeToLive, 60);
+                        NsQueryCache.Set(nsACacheKey, new CacheItem<DnsMessage>
+                        {
+                            Value = nsAMsg,
+                            ExpiryTime = DateTime.UtcNow.AddSeconds(nsATTL)
+                        });
+                    }
+                }
 
+                if (LogLevel >= 2) Console.WriteLine("NS-A RCode: " + nsAMsg?.ReturnCode);
+                if (LogLevel >= 2 && nsAMsg?.AnswerRecords.Any() == true)
+                    Console.WriteLine("NS-A Record: " + nsAMsg.AnswerRecords.FirstOrDefault());
 
-                var nsAddress = (nsAMsg.AnswerRecords.First(x => x.RecordType == RecordType.A) as ARecord)?.Address;
-                var nsCountry = CountryReader.Country(nsAddress).Country.IsoCode ?? "UN";
+                var nsAddress = (nsAMsg?.AnswerRecords.FirstOrDefault(x => x.RecordType == RecordType.A) as ARecord)
+                    ?.Address;
+                var nsCountry = nsAddress != null ? (CountryReader.Country(nsAddress)?.Country?.IsoCode ?? "UN") : "UN";
 
                 var nsExtract = TldExtract.Extract(nsName.ToString().Trim().Trim('.'));
                 var nsRName = DomainName.Parse(string.Join('.', string.IsNullOrWhiteSpace(nsExtract.tld)
@@ -340,8 +477,19 @@ namespace ArashiDNS.Nous
                     : [nsExtract.root, nsExtract.tld]));
 
                 if (LogLevel >= 2) Console.WriteLine("NS GEO: " + nsCountry);
-                DomainRegionMap.TryAdd(name, nsCountry);
-                DomainRegionMap.TryAdd(nsRName, nsCountry);
+
+                DomainRegionMap.Set(name, new CacheItem<string>
+                {
+                    Value = nsCountry,
+                    ExpiryTime = DateTime.UtcNow.AddSeconds(nsTTLValue * 6)
+                });
+
+                DomainRegionMap.Set(nsRName, new CacheItem<string>
+                {
+                    Value = nsCountry,
+                    ExpiryTime = DateTime.UtcNow.AddSeconds(nsTTLValue * 6)
+                });
+
                 return (string.Equals(nsCountry, TargetRegion, StringComparison.CurrentCultureIgnoreCase), nsName);
             }
             catch (Exception e)
@@ -350,5 +498,42 @@ namespace ArashiDNS.Nous
                 return (false, DomainName.Root);
             }
         }
+
+        private static void CleanupCacheTask()
+        {
+            CacheCleanupTimer = new Timer(_ =>
+            {
+                try
+                {
+                    var expiredKeys = DomainRegionMap.Where(kv => kv.Value.IsExpired)
+                        .Select(kv => kv.Key).ToList();
+                    foreach (var key in expiredKeys) DomainRegionMap.TryRemove(key, out var _);
+
+                    var expiredDnsKeys = DnsResponseCache.Where(kv => kv.Value.IsExpired)
+                        .Select(kv => kv.Key).ToList();
+                    foreach (var key in expiredDnsKeys) DnsResponseCache.TryRemove(key, out var _);
+
+                    var expiredNsKeys = NsQueryCache.Where(kv => kv.Value.IsExpired)
+                        .Select(kv => kv.Key).ToList();
+                    foreach (var key in expiredNsKeys) NsQueryCache.TryRemove(key, out var _);
+
+                    if (LogLevel >= 2 && (expiredKeys.Any() || expiredDnsKeys.Any() || expiredNsKeys.Any()))
+                        Console.WriteLine($"Cache cleanup: {expiredKeys.Count} region entries, " +
+                                          $"{expiredDnsKeys.Count} DNS entries, " +
+                                          $"{expiredNsKeys.Count} NS entries removed.");
+                }
+                catch (Exception ex)
+                {
+                    if (LogLevel >= 0) Console.WriteLine($"Cache cleanup error: {ex.Message}");
+                }
+            }, true, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(5));
+        }
+    }
+
+    internal static class ConcurrentDictionaryExtensions
+    {
+        public static void Set<TKey, TValue>(this ConcurrentDictionary<TKey, TValue> dictionary,
+            TKey key, TValue value) where TKey : notnull =>
+            dictionary.AddOrUpdate(key, value, (k, oldValue) => value);
     }
 }
