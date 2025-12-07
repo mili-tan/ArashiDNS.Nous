@@ -22,6 +22,7 @@ namespace ArashiDNS.Nous
         public static bool NoList = false;
         public static string CountryMmdbPath = "./GeoLite2-Country.mmdb";
         public static string PslDatPath = "./public_suffix_list.dat";
+        public static bool UseDnsResponseCache = false;
 
         public static Timer CacheCleanupTimer;
 
@@ -252,7 +253,7 @@ namespace ArashiDNS.Nous
             var questType = query.Questions.First().RecordType;
             var cacheKey = $"{questName}|{questType}";
 
-            if (DnsResponseCache.TryGetValue(cacheKey, out var cacheItem) && !cacheItem.IsExpired)
+            if (UseDnsResponseCache && DnsResponseCache.TryGetValue(cacheKey, out var cacheItem) && !cacheItem.IsExpired)
             {
                 if (LogLevel >= 2) Console.WriteLine($"DNS Cache Hit: {questName} {questType}");
                 e.Response = cacheItem.Value;
@@ -317,16 +318,10 @@ namespace ArashiDNS.Nous
                 }
             }
 
-            if (response != null && response.ReturnCode == ReturnCode.NoError && response.AnswerRecords.Any())
+            if (UseDnsResponseCache && response != null && response.ReturnCode == ReturnCode.NoError && response.AnswerRecords.Any())
             {
                 var minTTL = Math.Max(response.AnswerRecords.Min(r => r.TimeToLive), 60);
                 var expiryTime = DateTime.UtcNow.AddSeconds(minTTL);
-
-                DnsResponseCache.Set(cacheKey, new CacheItem<DnsMessage>
-                {
-                    Value = response,
-                    ExpiryTime = expiryTime
-                });
 
                 if (LogLevel >= 2) Console.WriteLine($"DNS Cache Set: {questName} {questType} TTL: {minTTL}s");
             }
