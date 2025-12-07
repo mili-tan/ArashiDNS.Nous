@@ -71,6 +71,7 @@ namespace ArashiDNS.Nous
                 CommandOptionType.SingleValue);
             var pslDatOption = cmd.Option<string>("--psl <Path>", "设置 public_suffix_list.dat 的路径。",
                 CommandOptionType.SingleValue);
+            var useDnsResponseCacheOption = cmd.Option<bool>("-c|--use-response-cache", "使用响应缓存", CommandOptionType.NoValue)；
 
             cmd.OnExecute(() =>
             {
@@ -83,6 +84,7 @@ namespace ArashiDNS.Nous
                 if (noListOption.HasValue()) NoList = noListOption.ParsedValue;
                 if (countryMmdbOption.HasValue()) CountryMmdbPath = countryMmdbOption.ParsedValue;
                 if (pslDatOption.HasValue()) PslDatPath = pslDatOption.ParsedValue;
+                if (useDnsResponseCacheOption.HasValue()) UseDnsResponseCache = useDnsResponseCacheOption.ParsedValue;
 
                 if (RegionalServer.Port == 0) RegionalServer = new IPEndPoint(RegionalServer.Address, 53);
                 if (GlobalServer.Port == 0) GlobalServer = new IPEndPoint(GlobalServer.Address, 53);
