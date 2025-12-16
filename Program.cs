@@ -23,6 +23,7 @@ namespace ArashiDNS.Nous
         public static string CountryMmdbPath = "./GeoLite2-Country.mmdb";
         public static string PslDatPath = "./public_suffix_list.dat";
         public static bool UseDnsResponseCache = false;
+        public static bool UseEcsCache = false;
 
         public static Timer CacheCleanupTimer;
 
@@ -256,6 +257,8 @@ namespace ArashiDNS.Nous
             var questType = query.Questions.First().RecordType;
             var cacheKey = $"{questName}|{questType}";
 
+            if (UseEcsCache) cacheKey += $"|{GetIpFromDns(query)}";
+
             if (UseDnsResponseCache && DnsResponseCache.TryGetValue(cacheKey, out var cacheItem) && !cacheItem.IsExpired)
             {
                 if (LogLevel >= 2) Console.WriteLine($"DNS Cache Hit: {questName} {questType}");
@@ -325,6 +328,12 @@ namespace ArashiDNS.Nous
             {
                 var minTTL = Math.Max(response.AnswerRecords.Min(r => r.TimeToLive), 60);
                 var expiryTime = DateTime.UtcNow.AddSeconds(minTTL);
+
+                DnsResponseCache.Set(cacheKey, new CacheItem<DnsMessage>
+                {
+                    Value = response,
+                    ExpiryTime = expiryTime
+                });
 
                 if (LogLevel >= 2) Console.WriteLine($"DNS Cache Set: {questName} {questType} TTL: {minTTL}s");
             }
@@ -525,6 +534,25 @@ namespace ArashiDNS.Nous
                     if (LogLevel >= 0) Console.WriteLine($"Cache cleanup error: {ex.Message}");
                 }
             }, true, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(5));
+        }
+
+        public static IPAddress GetIpFromDns(DnsMessage dnsMsg)
+        {
+            try
+            {
+                if (dnsMsg is { IsEDnsEnabled: false }) return IPAddress.Any;
+                foreach (var eDnsOptionBase in dnsMsg.EDnsOptions.Options.ToList())
+                {
+                    if (eDnsOptionBase is ClientSubnetOption option)
+                        return option.Address;
+                }
+
+                return IPAddress.Any;
+            }
+            catch (Exception)
+            {
+                return IPAddress.Any;
+            }
         }
     }
 
