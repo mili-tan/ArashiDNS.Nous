@@ -256,7 +256,6 @@ namespace ArashiDNS.Nous
             var questName = query.Questions.First().Name;
             var questType = query.Questions.First().RecordType;
             var cacheKey = $"{questName}|{questType}";
-
             if (UseEcsCache) cacheKey += $"|{GetIpFromDns(query)}";
 
             if (UseDnsResponseCache && DnsResponseCache.TryGetValue(cacheKey, out var cacheItem) && !cacheItem.IsExpired)
