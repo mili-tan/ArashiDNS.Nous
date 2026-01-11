@@ -20,6 +20,7 @@ namespace ArashiDNS.Nous
         public static int LogLevel = 1; // 0: Error, 1: Info, 2: Debug
         public static IPAddress RegionalECS = IPAddress.Parse("123.123.123.0");
         public static bool NoList = false;
+        public static bool NoFullList = true;
         public static string CountryMmdbPath = "./GeoLite2-Country.mmdb";
         public static string PslDatPath = "./public_suffix_list.dat";
         public static bool UseDnsResponseCache = false;
@@ -114,6 +115,26 @@ namespace ArashiDNS.Nous
                     Console.WriteLine("Regional ECS: " + RegionalECS);
                 }
 
+                if (!NoFullList)
+                {
+                    foreach (var item in new HttpClient()
+                                 .GetStringAsync(
+                                     "https://fastly.jsdelivr.net/gh/felixonmars/dnsmasq-china-list@master/accelerated-domains.china.conf")
+                                 .Result.Split('\n'))
+                    {
+                        try
+                        {
+                            if (string.IsNullOrWhiteSpace(item) || item.StartsWith('#')) continue;
+                            DomainRegionMap.Set(DomainName.Parse(item.Split('/')[1].Trim('.')),
+                                new CacheItem<string> {Value = "CN", ExpiryTime = DateTime.UtcNow.AddDays(30)});
+                            Console.WriteLine($"Add Domain Cache: {item.Trim().Trim('.')} -> CN");
+                        }
+                        catch (Exception e)
+                        {
+                            Console.WriteLine(e);
+                        }
+                    }
+                }
 
                 if (!NoList)
                 {
