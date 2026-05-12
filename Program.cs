@@ -25,6 +25,7 @@ namespace ArashiDNS.Nous
         public static string PslDatPath = "./public_suffix_list.dat";
         public static bool UseDnsResponseCache = false;
         public static bool UseEcsCache = false;
+        public static bool UseCname = true;
 
         public static Timer CacheCleanupTimer;
 
@@ -75,6 +76,8 @@ namespace ArashiDNS.Nous
                 CommandOptionType.SingleValue);
             var useDnsResponseCacheOption =
                 cmd.Option<bool>("-c|--use-response-cache", "使用响应缓存", CommandOptionType.NoValue);
+            var noCnameOption =
+                cmd.Option<bool>("-nc|--no-cname", "不对 CNAME 更多分析", CommandOptionType.NoValue);
 
             cmd.OnExecute(() =>
             {
@@ -88,6 +91,7 @@ namespace ArashiDNS.Nous
                 if (countryMmdbOption.HasValue()) CountryMmdbPath = countryMmdbOption.ParsedValue;
                 if (pslDatOption.HasValue()) PslDatPath = pslDatOption.ParsedValue;
                 if (useDnsResponseCacheOption.HasValue()) UseDnsResponseCache = useDnsResponseCacheOption.ParsedValue;
+                if (noCnameOption.HasValue()) UseCname = !noCnameOption.ParsedValue;
 
                 if (RegionalServer.Port == 0) RegionalServer = new IPEndPoint(RegionalServer.Address, 53);
                 if (GlobalServer.Port == 0) GlobalServer = new IPEndPoint(GlobalServer.Address, 53);
@@ -321,7 +325,7 @@ namespace ArashiDNS.Nous
                 response = await new DnsClient([GlobalServer.Address],
                     [new UdpClientTransport(RegionalServer.Port), new TcpClientTransport(RegionalServer.Port)],
                     queryTimeout: TimeOut).SendMessageAsync(query);
-                if (response != null && response.AnswerRecords.Any(x => x.RecordType == RecordType.CName))
+                if (response != null && response.AnswerRecords.Any(x => x.RecordType == RecordType.CName) && UseCname)
                 {
                     var cName =
                         (response.AnswerRecords.LastOrDefault(x => x.RecordType == RecordType.CName) as CNameRecord)
