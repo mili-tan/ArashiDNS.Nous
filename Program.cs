@@ -323,7 +323,7 @@ namespace ArashiDNS.Nous
             else
             {
                 response = await new DnsClient([GlobalServer.Address],
-                    [new UdpClientTransport(RegionalServer.Port), new TcpClientTransport(RegionalServer.Port)],
+                    [new UdpClientTransport(GlobalServer.Port), new TcpClientTransport(GlobalServer.Port)],
                     queryTimeout: TimeOut).SendMessageAsync(query);
                 if (response != null && response.AnswerRecords.Any(x => x.RecordType == RecordType.CName) && UseCname)
                 {
