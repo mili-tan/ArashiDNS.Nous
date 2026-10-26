@@ -29,6 +29,9 @@ namespace ArashiDNS.Nous
 
         public static Timer CacheCleanupTimer;
 
+        public static DnsClientPool RegionalClientPool;
+        public static DnsClientPool GlobalClientPool;
+
         public class CacheItem<T>
         {
             public T Value { get; set; }
@@ -44,7 +47,7 @@ namespace ArashiDNS.Nous
         public static DnsQueryOptions QueryOptions = new()
         {
             IsEDnsEnabled = true,
-            EDnsOptions = new OptRecord {Options = {new ClientSubnetOption(24, RegionalECS)}}
+            EDnsOptions = new OptRecord { Options = { new ClientSubnetOption(24, RegionalECS) } }
         };
 
         static void Main(string[] args)
@@ -112,8 +115,15 @@ namespace ArashiDNS.Nous
                     }
                     catch (Exception)
                     {
-                        RegionalECS =
-                            IPAddress.Parse(client.GetStringAsync("http://whatismyip.akamai.com/").Result);
+                        try
+                        {
+                            RegionalECS =
+                                IPAddress.Parse(client.GetStringAsync("http://whatismyip.akamai.com/").Result);
+                        }
+                        catch (Exception e)
+                        {
+                            Console.WriteLine("Failed to detect regional ECS, using default " + RegionalECS + ": " + e.Message);
+                        }
                     }
 
                     Console.WriteLine("Regional ECS: " + RegionalECS);
@@ -121,113 +131,191 @@ namespace ArashiDNS.Nous
 
                 if (!NoFullList)
                 {
-                    foreach (var item in new HttpClient()
-                                 .GetStringAsync(
-                                     "https://fastly.jsdelivr.net/gh/felixonmars/dnsmasq-china-list@master/accelerated-domains.china.conf")
-                                 .Result.Split('\n'))
+                    try
                     {
-                        try
+                        foreach (var item in new HttpClient()
+                                     .GetStringAsync(
+                                         "https://fastly.jsdelivr.net/gh/felixonmars/dnsmasq-china-list@master/accelerated-domains.china.conf")
+                                     .Result.Split('\n'))
                         {
-                            if (string.IsNullOrWhiteSpace(item) || item.StartsWith('#')) continue;
-                            DomainRegionMap.Set(DomainName.Parse(item.Split('/')[1].Trim('.')),
-                                new CacheItem<string> {Value = "CN", ExpiryTime = DateTime.UtcNow.AddDays(30)});
-                            Console.WriteLine($"Add Domain Cache: {item.Trim().Trim('.')} -> CN");
+                            try
+                            {
+                                if (string.IsNullOrWhiteSpace(item) || item.StartsWith('#')) continue;
+                                DomainRegionMap.Set(DomainName.Parse(item.Split('/')[1].Trim('.')),
+                                    new CacheItem<string> { Value = "CN", ExpiryTime = DateTime.UtcNow.AddDays(30) });
+                                Console.WriteLine($"Add Domain Cache: {item.Trim().Trim('.')} -> CN");
+                            }
+                            catch (Exception e)
+                            {
+                                Console.WriteLine(e);
+                            }
                         }
-                        catch (Exception e)
-                        {
-                            Console.WriteLine(e);
-                        }
+                    }
+                    catch (Exception e)
+                    {
+                        Console.WriteLine("Failed to load accelerated-domains.china.conf: " + e.Message);
                     }
                 }
 
                 if (!NoList)
                 {
-                    foreach (var item in new HttpClient()
-                                 .GetStringAsync(
-                                     "https://fastly.jsdelivr.net/gh/felixonmars/dnsmasq-china-list@master/ns-whitelist.txt")
-                                 .Result.Split('\n'))
+                    try
                     {
-                        try
+                        foreach (var item in new HttpClient()
+                                     .GetStringAsync(
+                                         "https://fastly.jsdelivr.net/gh/felixonmars/dnsmasq-china-list@master/ns-whitelist.txt")
+                                     .Result.Split('\n'))
                         {
-                            if (string.IsNullOrWhiteSpace(item) || item.StartsWith('#')) continue;
-                            DomainRegionMap.Set(DomainName.Parse(item.Trim().Trim('.')),
-                                new CacheItem<string> {Value = "CN", ExpiryTime = DateTime.UtcNow.AddDays(30)});
-                            Console.WriteLine($"Add Ns Cache: {item.Trim().Trim('.')} -> CN");
-                        }
-                        catch (Exception e)
-                        {
-                            Console.WriteLine(e);
+                            try
+                            {
+                                if (string.IsNullOrWhiteSpace(item) || item.StartsWith('#')) continue;
+                                DomainRegionMap.Set(DomainName.Parse(item.Trim().Trim('.')),
+                                    new CacheItem<string> { Value = "CN", ExpiryTime = DateTime.UtcNow.AddDays(30) });
+                                Console.WriteLine($"Add Ns Cache: {item.Trim().Trim('.')} -> CN");
+                            }
+                            catch (Exception e)
+                            {
+                                Console.WriteLine(e);
+                            }
                         }
                     }
-
-                    foreach (var item in new HttpClient()
-                                 .GetStringAsync(
-                                     "https://fastly.jsdelivr.net/gh/felixonmars/dnsmasq-china-list@master/ns-blacklist.txt")
-                                 .Result.Split('\n'))
+                    catch (Exception e)
                     {
-                        try
-                        {
-                            if (string.IsNullOrWhiteSpace(item) || item.StartsWith('#')) continue;
-                            DomainRegionMap.Set(DomainName.Parse(item.Trim().Trim('.')),
-                                new CacheItem<string> {Value = "UN", ExpiryTime = DateTime.UtcNow.AddDays(30)});
-                            Console.WriteLine($"Add Ns Cache: {item.Trim().Trim('.')} -> UN");
-                        }
-                        catch (Exception e)
-                        {
-                            Console.WriteLine(e);
-                        }
+                        Console.WriteLine("Failed to load ns-whitelist.txt: " + e.Message);
                     }
 
-                    foreach (var item in new HttpClient()
-                                 .GetStringAsync("https://fastly.jsdelivr.net/gh/mili-tan/ArashiDNS.Nous@master/ns.csv")
-                                 .Result
-                                 .Split('\n'))
+                    try
                     {
-                        try
+                        foreach (var item in new HttpClient()
+                                     .GetStringAsync(
+                                         "https://fastly.jsdelivr.net/gh/felixonmars/dnsmasq-china-list@master/ns-blacklist.txt")
+                                     .Result.Split('\n'))
                         {
-                            if (string.IsNullOrWhiteSpace(item) || item.StartsWith('#')) continue;
-                            var i = item.Split(',');
-                            DomainRegionMap.Set(DomainName.Parse(i[0].Trim().Trim('.')),
-                                new CacheItem<string> {Value = i[1], ExpiryTime = DateTime.UtcNow.AddDays(30)});
-                            Console.WriteLine($"Add Ns Cache: {i[0].Trim().Trim('.')} -> {i[1]}");
+                            try
+                            {
+                                if (string.IsNullOrWhiteSpace(item) || item.StartsWith('#')) continue;
+                                DomainRegionMap.Set(DomainName.Parse(item.Trim().Trim('.')),
+                                    new CacheItem<string> { Value = "UN", ExpiryTime = DateTime.UtcNow.AddDays(30) });
+                                Console.WriteLine($"Add Ns Cache: {item.Trim().Trim('.')} -> UN");
+                            }
+                            catch (Exception e)
+                            {
+                                Console.WriteLine(e);
+                            }
                         }
-                        catch (Exception e)
+                    }
+                    catch (Exception e)
+                    {
+                        Console.WriteLine("Failed to load ns-blacklist.txt: " + e.Message);
+                    }
+
+                    try
+                    {
+                        foreach (var item in new HttpClient()
+                                     .GetStringAsync("https://fastly.jsdelivr.net/gh/mili-tan/ArashiDNS.Nous@master/ns.csv")
+                                     .Result
+                                     .Split('\n'))
                         {
-                            Console.WriteLine(e);
+                            try
+                            {
+                                if (string.IsNullOrWhiteSpace(item) || item.StartsWith('#')) continue;
+                                var i = item.Split(',');
+                                DomainRegionMap.Set(DomainName.Parse(i[0].Trim().Trim('.')),
+                                    new CacheItem<string> { Value = i[1], ExpiryTime = DateTime.UtcNow.AddDays(30) });
+                                Console.WriteLine($"Add Ns Cache: {i[0].Trim().Trim('.')} -> {i[1]}");
+                            }
+                            catch (Exception e)
+                            {
+                                Console.WriteLine(e);
+                            }
                         }
+                    }
+                    catch (Exception e)
+                    {
+                        Console.WriteLine("Failed to load ns.csv: " + e.Message);
                     }
                 }
 
                 if (!countryMmdbOption.HasValue() && !File.Exists("./GeoLite2-Country.mmdb"))
                 {
-                    Console.WriteLine(
-                        "This product includes GeoLite2 data created by MaxMind, available from https://www.maxmind.com");
-                    Console.WriteLine("Downloading GeoLite2-Country.mmdb...");
-                    File.WriteAllBytes("./GeoLite2-Country.mmdb",
-                        new HttpClient()
-                            .GetByteArrayAsync(
-                                "https://fastly.jsdelivr.net/gh/P3TERX/GeoLite.mmdb@download/GeoLite2-Country.mmdb")
-                            .Result);
+                    try
+                    {
+                        Console.WriteLine(
+                            "This product includes GeoLite2 data created by MaxMind, available from https://www.maxmind.com");
+                        Console.WriteLine("Downloading GeoLite2-Country.mmdb...");
+                        File.WriteAllBytes("./GeoLite2-Country.mmdb",
+                            new HttpClient()
+                                .GetByteArrayAsync(
+                                    "https://fastly.jsdelivr.net/gh/P3TERX/GeoLite.mmdb@download/GeoLite2-Country.mmdb")
+                                .Result);
+                    }
+                    catch (Exception e)
+                    {
+                        Console.WriteLine("Failed to download GeoLite2-Country.mmdb: " + e.Message);
+                        Environment.Exit(1);
+                    }
                 }
 
                 if (!pslDatOption.HasValue() && !File.Exists("./public_suffix_list.dat"))
                 {
-                    Console.WriteLine("Downloading public_suffix_list.dat...");
-                    File.WriteAllBytes("./public_suffix_list.dat",
-                        new HttpClient()
-                            .GetByteArrayAsync(
-                                "https://publicsuffix.org/list/public_suffix_list.dat")
-                            .Result);
+                    try
+                    {
+                        Console.WriteLine("Downloading public_suffix_list.dat...");
+                        File.WriteAllBytes("./public_suffix_list.dat",
+                            new HttpClient()
+                                .GetByteArrayAsync(
+                                    "https://publicsuffix.org/list/public_suffix_list.dat")
+                                .Result);
+                    }
+                    catch (Exception e)
+                    {
+                        Console.WriteLine("Failed to download public_suffix_list.dat: " + e.Message);
+                        Environment.Exit(1);
+                    }
                 }
 
-                CountryReader = new DatabaseReader(CountryMmdbPath);
-                TldExtract = new TldExtract(PslDatPath);
+                if (!File.Exists(CountryMmdbPath))
+                {
+                    Console.WriteLine($"Error: MMDB file not found: {CountryMmdbPath}");
+                    Environment.Exit(1);
+                }
+
+                if (!File.Exists(PslDatPath))
+                {
+                    Console.WriteLine($"Error: PSL file not found: {PslDatPath}");
+                    Environment.Exit(1);
+                }
+
+                try
+                {
+                    CountryReader = new DatabaseReader(CountryMmdbPath);
+                    TldExtract = new TldExtract(PslDatPath);
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine("Failed to load GeoLite2-Country.mmdb / public_suffix_list.dat: " + e.Message);
+                    Environment.Exit(1);
+                }
 
                 QueryOptions = new DnsQueryOptions()
                 {
                     IsEDnsEnabled = true,
-                    EDnsOptions = new OptRecord {Options = {new ClientSubnetOption(24, RegionalECS)}}
+                    EDnsOptions = new OptRecord { Options = { new ClientSubnetOption(24, RegionalECS) } }
                 };
+
+                RegionalClientPool = new DnsClientPool(
+                    () => new DnsClient(
+                        [RegionalServer.Address],
+                        [new UdpClientTransport(RegionalServer.Port), new TcpClientTransport(RegionalServer.Port)],
+                        queryTimeout: TimeOut),
+                    initialSize: 4, maxSize: 64);
+
+                GlobalClientPool = new DnsClientPool(
+                    () => new DnsClient(
+                        [GlobalServer.Address],
+                        [new UdpClientTransport(GlobalServer.Port), new TcpClientTransport(GlobalServer.Port)],
+                        queryTimeout: TimeOut),
+                    initialSize: 4, maxSize: 64);
 
                 var dnsServer = new DnsServer(new UdpServerTransport(ListenerEndPoint),
                     new TcpServerTransport(ListenerEndPoint));
@@ -286,8 +374,9 @@ namespace ArashiDNS.Nous
             if (UseDnsResponseCache && DnsResponseCache.TryGetValue(cacheKey, out var cacheItem) && !cacheItem.IsExpired)
             {
                 if (LogLevel >= 2) Task.Run(() => Console.WriteLine($"DNS Cache Hit: {questName} {questType}"));
-                e.Response = cacheItem.Value;
-                e.Response.TransactionID = query.TransactionID;
+                var cached = CloneMessage(cacheItem.Value);
+                cached.TransactionID = query.TransactionID;
+                e.Response = cached;
                 return;
             }
 
@@ -316,15 +405,10 @@ namespace ArashiDNS.Nous
                     roorNs.ToString(), RNsIs.ToString())));
 
             if (RNsIs)
-                response = await new DnsClient([RegionalServer.Address], [
-                    new UdpClientTransport(RegionalServer.Port),
-                    new TcpClientTransport(RegionalServer.Port)
-                ], queryTimeout: TimeOut).SendMessageAsync(query);
+                response = await SendRegionalAsync(query);
             else
             {
-                response = await new DnsClient([GlobalServer.Address],
-                    [new UdpClientTransport(GlobalServer.Port), new TcpClientTransport(GlobalServer.Port)],
-                    queryTimeout: TimeOut).SendMessageAsync(query);
+                response = await SendGlobalAsync(query);
                 if (response != null && response.AnswerRecords.Any(x => x.RecordType == RecordType.CName) && UseCname)
                 {
                     var cName =
@@ -342,9 +426,7 @@ namespace ArashiDNS.Nous
                             cnameRName.ToString(), cnameNs.ToString(), "-", cnameNsIs.ToString())));
 
                     if (cnameNsIs)
-                        response = await new DnsClient([RegionalServer.Address],
-                            [new UdpClientTransport(RegionalServer.Port), new TcpClientTransport(RegionalServer.Port)],
-                            queryTimeout: TimeOut).SendMessageAsync(query);
+                        response = await SendRegionalAsync(query);
                 }
             }
 
@@ -367,8 +449,62 @@ namespace ArashiDNS.Nous
             e.Response = response;
         }
 
+        private static async Task<DnsMessage?> SendRegionalAsync(DnsMessage query)
+            => await WithClient(RegionalClientPool, c => c.SendMessageAsync(query));
+
+        private static async Task<DnsMessage?> SendGlobalAsync(DnsMessage query)
+            => await WithClient(GlobalClientPool, c => c.SendMessageAsync(query));
+
+        private static async Task<T> WithClient<T>(DnsClientPool pool, Func<DnsClient, Task<T>> action)
+        {
+            var client = pool.Rent();
+            try
+            {
+                return await action(client);
+            }
+            finally
+            {
+                pool.Return(client);
+            }
+        }
+
+        private static DnsMessage CloneMessage(DnsMessage source)
+        {
+            var clone = new DnsMessage
+            {
+                TransactionID = source.TransactionID,
+                IsQuery = source.IsQuery,
+                OperationCode = source.OperationCode,
+                IsRecursionDesired = source.IsRecursionDesired,
+                IsRecursionAllowed = source.IsRecursionAllowed,
+                IsAuthenticData = source.IsAuthenticData,
+                IsCheckingDisabled = source.IsCheckingDisabled,
+                ReturnCode = source.ReturnCode,
+                IsTruncated = source.IsTruncated
+            };
+
+            clone.Questions.AddRange(source.Questions);
+            clone.AnswerRecords.AddRange(source.AnswerRecords);
+            clone.AuthorityRecords.AddRange(source.AuthorityRecords);
+            clone.AdditionalRecords.AddRange(source.AdditionalRecords);
+
+            if (source.EDnsOptions == null) return clone;
+            var opt = new OptRecord
+            {
+                UdpPayloadSize = source.EDnsOptions.UdpPayloadSize,
+                ExtendedReturnCode = source.EDnsOptions.ExtendedReturnCode,
+                Version = source.EDnsOptions.Version,
+                IsDnsSecOk = source.EDnsOptions.IsDnsSecOk
+            };
+            opt.Options.AddRange(source.EDnsOptions.Options);
+            clone.EDnsOptions = opt;
+
+            return clone;
+        }
+
         private static async Task<(bool isRegion, DomainName ns)> FromNameGetNsIs(DomainName name)
         {
+            var client = GlobalClientPool.Rent();
             try
             {
                 if (LogLevel >= 2) Task.Run(() => Console.WriteLine("Root Name: " + name));
@@ -409,9 +545,6 @@ namespace ArashiDNS.Nous
                     }
                 }
 
-                var client = new DnsClient([GlobalServer.Address],
-                    [new UdpClientTransport(RegionalServer.Port), new TcpClientTransport(RegionalServer.Port)],
-                    queryTimeout: TimeOut);
                 var nsMsg = await client.ResolveAsync(name, RecordType.Ns, options: QueryOptions);
                 if (nsMsg == null || !nsMsg.AnswerRecords.Any()) nsMsg = await client.ResolveAsync(name, RecordType.Ns);
                 if (LogLevel >= 2) Task.Run(() => Console.WriteLine("NS RCode: " + nsMsg.ReturnCode));
@@ -528,6 +661,10 @@ namespace ArashiDNS.Nous
                 if (LogLevel >= 0) Task.Run(() => Console.WriteLine("Error: " + e.Message));
                 return (false, DomainName.Root);
             }
+            finally
+            {
+                GlobalClientPool.Return(client);
+            }
         }
 
         private static void CleanupCacheTask()
@@ -585,5 +722,42 @@ namespace ArashiDNS.Nous
         public static void Set<TKey, TValue>(this ConcurrentDictionary<TKey, TValue> dictionary,
             TKey key, TValue value) where TKey : notnull =>
             dictionary.AddOrUpdate(key, value, (k, oldValue) => value);
+    }
+
+    internal sealed class DnsClientPool : IDisposable
+    {
+        private readonly Func<DnsClient> _factory;
+        private readonly ConcurrentBag<DnsClient> _pool = new();
+        private readonly int _maxSize;
+
+        public DnsClientPool(Func<DnsClient> factory, int initialSize = 4, int maxSize = 64)
+        {
+            _factory = factory;
+            _maxSize = maxSize;
+            for (int i = 0; i < initialSize; i++)
+                _pool.Add(_factory());
+        }
+
+        public DnsClient Rent() => _pool.TryTake(out var client) ? client : _factory();
+
+        public void Return(DnsClient client)
+        {
+            if (client == null) return;
+            if (_pool.Count < _maxSize)
+                _pool.Add(client);
+            else
+                SafeDispose(client);
+        }
+
+        public void Dispose()
+        {
+            while (_pool.TryTake(out var client))
+                SafeDispose(client);
+        }
+
+        private static void SafeDispose(DnsClient client)
+        {
+            (client as IDisposable)?.Dispose();
+        }
     }
 }
