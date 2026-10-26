@@ -502,6 +502,20 @@ namespace ArashiDNS.Nous
             return clone;
         }
 
+        private static bool TryGetRegionForName(DomainName name, out DomainName matchedName, out string region)
+        {
+            matchedName = null;
+            region = null;
+
+            var findName = DomainRegionMap.Keys.FirstOrDefault(name.IsEqualOrSubDomainOf);
+            if (findName == null) return false;
+            if (!DomainRegionMap.TryGetValue(findName, out var cache) || cache.IsExpired) return false;
+
+            matchedName = findName;
+            region = cache.Value;
+            return true;
+        }
+
         private static async Task<(bool isRegion, DomainName ns)> FromNameGetNsIs(DomainName name)
         {
             var client = GlobalClientPool.Rent();
@@ -517,14 +531,12 @@ namespace ArashiDNS.Nous
                         name);
                 }
 
-                var findName = DomainRegionMap.Keys.FirstOrDefault(name.IsEqualOrSubDomainOf);
-                if (findName != null && DomainRegionMap.TryGetValue(findName, out var parentCache) &&
-                    !parentCache.IsExpired)
+                if (TryGetRegionForName(name, out var parentName, out var parentRegion))
                 {
                     if (LogLevel >= 2)
-                        Task.Run(() => Console.WriteLine($"Found Parent Cache: {findName} -> {parentCache.Value}"));
-                    return (string.Equals(parentCache.Value, TargetRegion, StringComparison.CurrentCultureIgnoreCase),
-                        findName);
+                        Task.Run(() => Console.WriteLine($"Found Parent Cache: {parentName} -> {parentRegion}"));
+                    return (string.Equals(parentRegion, TargetRegion, StringComparison.CurrentCultureIgnoreCase),
+                        parentName);
                 }
 
                 var nsCacheKey = $"NS|{name}";
@@ -590,17 +602,16 @@ namespace ArashiDNS.Nous
                         DomainName.Parse("awsdns-1.com"));
                 }
 
-                var findNs = DomainRegionMap.Keys.FirstOrDefault(nsName.IsEqualOrSubDomainOf);
-                if (findNs != null && DomainRegionMap.TryGetValue(findNs, out var nsRegionCache) &&
-                    !nsRegionCache.IsExpired)
+                if (TryGetRegionForName(nsName, out var findNs, out var nsRegionValue))
                 {
-                    if (LogLevel >= 2) Task.Run(() => Console.WriteLine($"Found NS Cache: {findNs} -> {nsRegionCache.Value}"));
+                    if (LogLevel >= 2)
+                        Task.Run(() => Console.WriteLine($"Found NS Cache: {findNs} -> {nsRegionValue}"));
                     DomainRegionMap.Set(name, new CacheItem<string>
                     {
-                        Value = nsRegionCache.Value,
+                        Value = nsRegionValue,
                         ExpiryTime = DateTime.UtcNow.AddSeconds(nsTTLValue * 6)
                     });
-                    return (string.Equals(nsRegionCache.Value, TargetRegion, StringComparison.CurrentCultureIgnoreCase),
+                    return (string.Equals(nsRegionValue, TargetRegion, StringComparison.CurrentCultureIgnoreCase),
                         findNs);
                 }
 
