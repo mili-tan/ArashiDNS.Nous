@@ -18,7 +18,6 @@ namespace ArashiDNS.Nous
         public static string TargetRegion = "CN";
         public static int TimeOut = 3000;
         public static int LogLevel = 1; // 0: Error, 1: Info, 2: Debug
-        public static IPAddress RegionalECS = IPAddress.Parse("123.123.123.0");
         public static bool NoList = false;
         public static bool NoFullList = true;
         public static string CountryMmdbPath = "./GeoLite2-Country.mmdb";
@@ -26,6 +25,9 @@ namespace ArashiDNS.Nous
         public static bool UseDnsResponseCache = false;
         public static bool UseEcsCache = false;
         public static bool UseCname = true;
+
+        public static byte RegionalEcsPrefix = 24;
+        public static IPAddress RegionalEcsSubnet = IPAddress.Parse("123.123.123.0");
 
         public static Timer CacheCleanupTimer;
 
@@ -47,7 +49,7 @@ namespace ArashiDNS.Nous
         public static DnsQueryOptions QueryOptions = new()
         {
             IsEDnsEnabled = true,
-            EDnsOptions = new OptRecord { Options = { new ClientSubnetOption(24, RegionalECS) } }
+            EDnsOptions = new OptRecord {Options = {new ClientSubnetOption(RegionalEcsPrefix, RegionalEcsSubnet)}}
         };
 
         static void Main(string[] args)
@@ -103,31 +105,34 @@ namespace ArashiDNS.Nous
                 var client = new HttpClient();
                 client.DefaultRequestHeaders.Add("User-Agent", "curl/8.5.0");
 
-                if (ecsOption.HasValue()) RegionalECS = IPAddress.Parse(ecsOption.ParsedValue);
+                if (ecsOption.HasValue()) RegionalEcsSubnet = IPAddress.Parse(ecsOption.ParsedValue);
                 else
                 {
                     try
                     {
                         var info = client.GetStringAsync("https://www.cloudflare-cn.com/cdn-cgi/trace").Result;
                         if (info.Contains("loc=CN"))
-                            RegionalECS = IPAddress.Parse(info.Split('\n').First(i => i.StartsWith("ip=")).Split("=")
+                            RegionalEcsSubnet = IPAddress.Parse(info.Split('\n').First(i => i.StartsWith("ip=")).Split("=")
                                 .LastOrDefault()?.Trim() ?? string.Empty);
                     }
                     catch (Exception)
                     {
                         try
                         {
-                            RegionalECS =
+                            RegionalEcsSubnet =
                                 IPAddress.Parse(client.GetStringAsync("http://whatismyip.akamai.com/").Result);
                         }
                         catch (Exception e)
                         {
-                            Console.WriteLine("Failed to detect regional ECS, using default " + RegionalECS + ": " + e.Message);
+                            Console.WriteLine("Failed to detect regional ECS, using default " + RegionalEcsSubnet + ": " + e.Message);
                         }
                     }
 
-                    Console.WriteLine("Regional ECS: " + RegionalECS);
                 }
+
+                (RegionalEcsPrefix, RegionalEcsSubnet) = GetRegionalSubnet(RegionalEcsSubnet);
+                Console.WriteLine("Regional ECS: " + RegionalEcsSubnet + "/" + RegionalEcsPrefix);
+
 
                 if (!NoFullList)
                 {
@@ -300,7 +305,10 @@ namespace ArashiDNS.Nous
                 QueryOptions = new DnsQueryOptions()
                 {
                     IsEDnsEnabled = true,
-                    EDnsOptions = new OptRecord { Options = { new ClientSubnetOption(24, RegionalECS) } }
+                    EDnsOptions = new OptRecord
+                    {
+                        Options = { new ClientSubnetOption(RegionalEcsPrefix, RegionalEcsSubnet) }
+                    }
                 };
 
                 RegionalClientPool = new DnsClientPool(
@@ -341,118 +349,155 @@ namespace ArashiDNS.Nous
 
         private static async Task DnsServerOnQueryReceived(object sender, QueryReceivedEventArgs e)
         {
-            if (e.Query is not DnsMessage query || query.Questions.Count == 0) return;
-
-            if (query.Questions.First().Name.IsEqualOrSubDomainOf(DomainName.Parse("use-application-dns.net")))
+            try
             {
-                var msg = query.CreateResponseInstance();
-                msg.IsRecursionAllowed = true;
-                msg.IsRecursionDesired = true;
-                msg.ReturnCode = ReturnCode.NoError;
-                e.Response = msg;
-                return;
-            }
+                if (e.Query is not DnsMessage query || query.Questions.Count == 0) return;
 
-            if (query.Questions.First().RecordClass == RecordClass.Chaos &&
-                query.Questions.First().RecordType == RecordType.Txt &&
-                query.Questions.First().Name.IsEqualOrSubDomainOf(DomainName.Parse("version.bind")))
-            {
-                var msg = query.CreateResponseInstance();
-                msg.IsRecursionAllowed = true;
-                msg.IsRecursionDesired = true;
-                msg.AnswerRecords.Add(
-                    new TxtRecord(query.Questions.First().Name, 3600, "ArashiDNS.Nous"));
-                e.Response = msg;
-                return;
-            }
-
-            var questName = query.Questions.First().Name;
-            var questType = query.Questions.First().RecordType;
-            var cacheKey = $"{questName}|{questType}";
-            if (UseEcsCache) cacheKey += $"|{GetIpFromDns(query)}";
-
-            if (UseDnsResponseCache && DnsResponseCache.TryGetValue(cacheKey, out var cacheItem) && !cacheItem.IsExpired)
-            {
-                if (LogLevel >= 2) Task.Run(() => Console.WriteLine($"DNS Cache Hit: {questName} {questType}"));
-                var cached = CloneMessage(cacheItem.Value);
-                cached.TransactionID = query.TransactionID;
-                e.Response = cached;
-                return;
-            }
-
-            var questExtract = TldExtract.Extract(questName.ToString().Trim().Trim('.'));
-
-            if (!query.IsEDnsEnabled || (query.EDnsOptions != null && query.EDnsOptions.Options.Any(x =>
-                    x.Type == EDnsOptionType.ClientSubnet)))
-            {
-                query.IsEDnsEnabled = true;
-                query.EDnsOptions = new OptRecord
+                if (query.Questions.First().Name.IsEqualOrSubDomainOf(DomainName.Parse("use-application-dns.net")))
                 {
-                    Options = { new ClientSubnetOption(24, RegionalECS) }
-                };
-            }
+                    var msg = query.CreateResponseInstance();
+                    msg.IsRecursionAllowed = true;
+                    msg.IsRecursionDesired = true;
+                    msg.ReturnCode = ReturnCode.NoError;
+                    e.Response = msg;
+                    return;
+                }
 
-            if (LogLevel >= 2) Task.Run(() => Console.WriteLine(questExtract));
-            var questRName = DomainName.Parse(string.Join('.', string.IsNullOrWhiteSpace(questExtract.tld)
-                ? questName.Labels.TakeLast(2)
-                : [questExtract.root, questExtract.tld]));
-            DnsMessage? response;
-            var (RNsIs, roorNs) = await FromNameGetNsIs(questRName);
-
-            if (LogLevel >= 1)
-                Task.Run(() => Console.WriteLine("RNAME Result: " + string.Join(" | ", questName.ToString(),
-                    questRName.ToString(), "-",
-                    roorNs.ToString(), RNsIs.ToString())));
-
-            if (RNsIs)
-                response = await SendRegionalAsync(query);
-            else
-            {
-                response = await SendGlobalAsync(query);
-                if (response != null && response.AnswerRecords.Any(x => x.RecordType == RecordType.CName) && UseCname)
+                if (query.Questions.First().RecordClass == RecordClass.Chaos &&
+                    query.Questions.First().RecordType == RecordType.Txt &&
+                    query.Questions.First().Name.IsEqualOrSubDomainOf(DomainName.Parse("version.bind")))
                 {
-                    var cName =
-                        (response.AnswerRecords.LastOrDefault(x => x.RecordType == RecordType.CName) as CNameRecord)
-                        ?.CanonicalName;
-                    var cnameExtract = TldExtract.Extract(cName.ToString().Trim().Trim('.'));
-                    var cnameRName = DomainName.Parse(string.Join('.', string.IsNullOrWhiteSpace(cnameExtract.tld)
-                        ? cName.Labels.TakeLast(2)
-                        : [cnameExtract.root, cnameExtract.tld]));
-                    var (cnameNsIs, cnameNs) = await FromNameGetNsIs(cnameRName);
+                    var msg = query.CreateResponseInstance();
+                    msg.IsRecursionAllowed = true;
+                    msg.IsRecursionDesired = true;
+                    msg.AnswerRecords.Add(
+                        new TxtRecord(query.Questions.First().Name, 3600, "ArashiDNS.Nous"));
+                    e.Response = msg;
+                    return;
+                }
 
-                    if (LogLevel >= 1)
-                        Task.Run(() => Console.WriteLine("CNAME Result: " + string.Join(" | ", questName.ToString(), cName.ToString(),
-                            "-",
-                            cnameRName.ToString(), cnameNs.ToString(), "-", cnameNsIs.ToString())));
+                var questName = query.Questions.First().Name;
+                var questType = query.Questions.First().RecordType;
+                var cacheKey = $"{questName}|{questType}";
+                if (UseEcsCache) cacheKey += $"|{GetIpFromDns(query)}";
 
-                    if (cnameNsIs)
-                        response = await SendRegionalAsync(query);
+                if (UseDnsResponseCache && DnsResponseCache.TryGetValue(cacheKey, out var cacheItem) && !cacheItem.IsExpired)
+                {
+                    if (LogLevel >= 2) Task.Run(() => Console.WriteLine($"DNS Cache Hit: {questName} {questType}"));
+                    var cached = CloneMessage(cacheItem.Value);
+                    cached.TransactionID = query.TransactionID;
+                    e.Response = cached;
+                    return;
+                }
+
+                var questExtract = TldExtract.Extract(questName.ToString().Trim().Trim('.'));
+
+                var hasEcs = query is {IsEDnsEnabled: true, EDnsOptions: not null} &&
+                             query.EDnsOptions.Options.Any(x => x.Type == EDnsOptionType.ClientSubnet);
+                if (!hasEcs)
+                {
+                    query.IsEDnsEnabled = true;
+                    query.EDnsOptions = new OptRecord
+                    {
+                        Options = { new ClientSubnetOption(RegionalEcsPrefix, RegionalEcsSubnet) }
+                    };
+                }
+
+                if (LogLevel >= 2) Task.Run(() => Console.WriteLine(questExtract));
+                var questRName = string.IsNullOrWhiteSpace(questExtract.tld)
+                    ? GetEffectiveRootName(questName)
+                    : DomainName.Parse(string.Join('.', [questExtract.root, questExtract.tld]));
+                DnsMessage? response;
+                var (RNsIs, roorNs) = await FromNameGetNsIs(questRName);
+
+                if (LogLevel >= 1)
+                    Task.Run(() => Console.WriteLine("RNAME Result: " + string.Join(" | ", questName.ToString(),
+                        questRName.ToString(), "-",
+                        roorNs.ToString(), RNsIs.ToString())));
+
+                if (RNsIs)
+                    response = await SendRegionalAsync(query);
+                else
+                {
+                    response = await SendGlobalAsync(query);
+                    if (response != null && response.AnswerRecords.Any(x => x.RecordType == RecordType.CName) && UseCname)
+                    {
+                        var cName =
+                            (response.AnswerRecords.LastOrDefault(x => x.RecordType == RecordType.CName) as CNameRecord)
+                            ?.CanonicalName;
+
+                        if (cName != null)
+                        {
+                            var cnameExtract = TldExtract.Extract(cName.ToString().Trim().Trim('.'));
+                            var cnameRName = string.IsNullOrWhiteSpace(cnameExtract.tld)
+                                ? GetEffectiveRootName(cName)
+                                : DomainName.Parse(string.Join('.', [cnameExtract.root, cnameExtract.tld]));
+                            var (cnameNsIs, cnameNs) = await FromNameGetNsIs(cnameRName);
+
+                            if (LogLevel >= 1)
+                                Task.Run(() => Console.WriteLine("CNAME Result: " + string.Join(" | ", questName.ToString(), cName.ToString(),
+                                    "-",
+                                    cnameRName.ToString(), cnameNs.ToString(), "-", cnameNsIs.ToString())));
+
+                            if (cnameNsIs)
+                            {
+                                var retry = await SendRegionalAsync(query);
+                                if (retry != null) response = retry;
+                            }
+                        }
+                    }
+                }
+
+                if (response == null)
+                {
+                    if (LogLevel >= 1) Task.Run(() => Console.WriteLine("Upstream returned no response, sending SERVFAIL: " + questName));
+                    var fail = query.CreateResponseInstance();
+                    fail.ReturnCode = ReturnCode.ServerFailure;
+                    e.Response = fail;
+                    return;
+                }
+
+                if (UseDnsResponseCache && response.ReturnCode == ReturnCode.NoError && response.AnswerRecords.Any())
+                {
+                    var minTTL = Math.Max(response.AnswerRecords.Min(r => r.TimeToLive), 60);
+                    var expiryTime = DateTime.UtcNow.AddSeconds(minTTL);
+
+                    DnsResponseCache.Set(cacheKey, new CacheItem<DnsMessage>
+                    {
+                        Value = response,
+                        ExpiryTime = expiryTime
+                    });
+
+                    if (LogLevel >= 2) Task.Run(() => Console.WriteLine($"DNS Cache Set: {questName} {questType} TTL: {minTTL}s"));
+                }
+
+                if (LogLevel >= 1)
+                    Task.Run(() => Console.WriteLine("-----------------------------------"));
+                e.Response = response;
+            }
+            catch (Exception ex)
+            {
+                if (LogLevel >= 0) Console.WriteLine("Unhandled error in DnsServerOnQueryReceived: " + ex);
+                if (e.Query is DnsMessage q && e.Response == null)
+                {
+                    try
+                    {
+                        var fail = q.CreateResponseInstance();
+                        fail.ReturnCode = ReturnCode.ServerFailure;
+                        e.Response = fail;
+                    }
+                    catch
+                    {
+                        // ignored
+                    }
                 }
             }
-
-            if (UseDnsResponseCache && response != null && response.ReturnCode == ReturnCode.NoError && response.AnswerRecords.Any())
-            {
-                var minTTL = Math.Max(response.AnswerRecords.Min(r => r.TimeToLive), 60);
-                var expiryTime = DateTime.UtcNow.AddSeconds(minTTL);
-
-                DnsResponseCache.Set(cacheKey, new CacheItem<DnsMessage>
-                {
-                    Value = response,
-                    ExpiryTime = expiryTime
-                });
-
-                if (LogLevel >= 2) Task.Run(() => Console.WriteLine($"DNS Cache Set: {questName} {questType} TTL: {minTTL}s"));
-            }
-
-            if (LogLevel >= 1)
-                Task.Run(() => Console.WriteLine("-----------------------------------"));
-            e.Response = response;
         }
 
-        private static async Task<DnsMessage?> SendRegionalAsync(DnsMessage query)
+        private static async Task<DnsMessage> SendRegionalAsync(DnsMessage query)
             => await WithClient(RegionalClientPool, c => c.SendMessageAsync(query));
 
-        private static async Task<DnsMessage?> SendGlobalAsync(DnsMessage query)
+        private static async Task<DnsMessage> SendGlobalAsync(DnsMessage query)
             => await WithClient(GlobalClientPool, c => c.SendMessageAsync(query));
 
         private static async Task<T> WithClient<T>(DnsClientPool pool, Func<DnsClient, Task<T>> action)
@@ -466,6 +511,25 @@ namespace ArashiDNS.Nous
             {
                 pool.Return(client);
             }
+        }
+
+        private static DomainName GetEffectiveRootName(DomainName name)
+        {
+            var labels = name.Labels;
+            return labels.Length <= 2 ? name : DomainName.Parse(labels[^2] + "." + labels[^1]);
+        }
+
+        private static (byte prefix, IPAddress subnet) GetRegionalSubnet(IPAddress address)
+        {
+            var bytes = address.GetAddressBytes();
+            if (bytes.Length == 4)
+            {
+                bytes[3] = 0;
+                return (24, new IPAddress(bytes));
+            }
+
+            for (var i = 7; i < bytes.Length; i++) bytes[i] = 0;
+            return (56, new IPAddress(bytes));
         }
 
         private static DnsMessage CloneMessage(DnsMessage source)
@@ -507,13 +571,19 @@ namespace ArashiDNS.Nous
             matchedName = null;
             region = null;
 
-            var findName = DomainRegionMap.Keys.FirstOrDefault(name.IsEqualOrSubDomainOf);
-            if (findName == null) return false;
-            if (!DomainRegionMap.TryGetValue(findName, out var cache) || cache.IsExpired) return false;
+            for (var current = name; current != null; current = current.GetParentName())
+            {
+                if (DomainRegionMap.TryGetValue(current, out var cache) && !cache.IsExpired)
+                {
+                    matchedName = current;
+                    region = cache.Value;
+                    return true;
+                }
 
-            matchedName = findName;
-            region = cache.Value;
-            return true;
+                if (current == DomainName.Root) break;
+            }
+
+            return false;
         }
 
         private static async Task<(bool isRegion, DomainName ns)> FromNameGetNsIs(DomainName name)
@@ -550,7 +620,7 @@ namespace ArashiDNS.Nous
                         var nRecord = cachedNsMsg.AnswerRecords.First(x => x.RecordType == RecordType.Ns) as NsRecord;
                         var nName = nRecord?.NameServer;
 
-                        if (DomainRegionMap.TryGetValue(nName, out var nsCache) && !nsCache.IsExpired)
+                        if (nName != null && DomainRegionMap.TryGetValue(nName, out var nsCache) && !nsCache.IsExpired)
                             return (
                                 string.Equals(nsCache.Value, TargetRegion, StringComparison.CurrentCultureIgnoreCase),
                                 nName);
@@ -576,6 +646,12 @@ namespace ArashiDNS.Nous
                 if (LogLevel >= 2) Task.Run(() => Console.WriteLine("NS Record: " + nsRecord));
 
                 var nsName = (nsRecord as NsRecord)?.NameServer;
+                if (nsName == null)
+                {
+                    if (LogLevel >= 2)
+                        Task.Run(() => Console.WriteLine("No NS record found, falling back to Global: " + name));
+                    return (false, DomainName.Root);
+                }
                 var nsTTLValue = nsRecord?.TimeToLive ?? 86400;
 
                 if (nsName.ToString().Contains("awsdns-cn-"))
@@ -647,9 +723,9 @@ namespace ArashiDNS.Nous
                 var nsCountry = nsAddress != null ? (CountryReader.Country(nsAddress)?.Country?.IsoCode ?? "UN") : "UN";
 
                 var nsExtract = TldExtract.Extract(nsName.ToString().Trim().Trim('.'));
-                var nsRName = DomainName.Parse(string.Join('.', string.IsNullOrWhiteSpace(nsExtract.tld)
-                    ? nsName.Labels.TakeLast(2)
-                    : [nsExtract.root, nsExtract.tld]));
+                var nsRName = string.IsNullOrWhiteSpace(nsExtract.tld)
+                    ? GetEffectiveRootName(nsName)
+                    : DomainName.Parse(string.Join('.', [nsExtract.root, nsExtract.tld]));
 
                 if (LogLevel >= 2) Task.Run(() => Console.WriteLine("NS GEO: " + nsCountry));
 
